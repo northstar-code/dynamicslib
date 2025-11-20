@@ -52,6 +52,8 @@ def dc_arclen(
     modified: bool = True,
     max_iter: int | None = None,
     fudge: float | None = None,
+    debug: bool = False,
+    normalize: bool = False,
     # maxstep: float | None = None,
 ) -> Tuple[NDArray, NDArray, NDArray]:
     """Pseudoarclength continuation differential corrector. The modified algorithm has a full step size of s, rather than projected step size.
@@ -90,7 +92,11 @@ def dc_arclen(
         G = np.array([*f, lastG])
         dG = np.vstack((dF, lastDG))
         dX = -np.linalg.inv(dG) @ G
+        if normalize:
+            dX /= np.linalg.norm(dX)
         X += dX * fudge
+        if debug:
+            print(niters, dX)
         niters += 1
 
     return X, dF, stm_full

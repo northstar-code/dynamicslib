@@ -292,7 +292,7 @@ def dop853(
     fs = expand_dims(func(t0, x0, *args), axis=0)
     ts = array([t0], dtype=float64)
     x = x0.copy()
-    h = init_step if forward else -abs(init_step)
+    h = abs(init_step) if forward else -abs(init_step)
 
     # pp180 of RKEM
     while (t < tf) if forward else (t > tf):

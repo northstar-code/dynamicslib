@@ -729,7 +729,7 @@ def plotly_display(
     app.run(debug=False, use_reloader=False, port=port)
 
 
-def broucke_diagram(df: pd.DataFrame, html_save: str | None = None):
+def broucke_diagram(df: pd.DataFrame, html_save: str | None = None, show: bool = True):
     n = len(df)
     colormap = "rainbow"
     eig_df = df[[col for col in df.columns if "Eig" in col]]
@@ -738,12 +738,13 @@ def broucke_diagram(df: pd.DataFrame, html_save: str | None = None):
     alpha = 2 - np.sum(eigs, axis=1).real
     beta = (alpha**2 - (np.sum(eigs**2, axis=1).real - 2)) / 2
     alphrange = np.max(np.abs(alpha))
-    x = np.linspace(-((alphrange) ** (1 / 3)), (alphrange) ** (1 / 3), 1000, False) ** 3
+    x = np.linspace(-((alphrange) ** (1 / 3)), (alphrange) ** (1 / 3), 1000) ** 3
+    x = np.unique([*x, *np.linspace(-3, 3, 50)])
 
     def get_per_mult(x, n, q=1):
         a = -2 * np.cos(2 * np.pi * q / n)
         b = 2 - 4 * (np.cos(2 * np.pi * q / n)) ** 2
-        return a * x
+        return a * x + b
 
     lines_cross = np.array(
         [
@@ -756,10 +757,11 @@ def broucke_diagram(df: pd.DataFrame, html_save: str | None = None):
             get_per_mult(x, 7, 1),
             get_per_mult(x, 7, 2),
             get_per_mult(x, 7, 3),
-            get_per_mult(x, 8),
-            # get_per_mult(x, 9, 1),
-            # get_per_mult(x, 9, 2),
-            # get_per_mult(x, 9, 4),
+            get_per_mult(x, 8, 1),
+            get_per_mult(x, 8, 3),
+            get_per_mult(x, 9, 1),
+            get_per_mult(x, 9, 2),
+            get_per_mult(x, 9, 4),
             -2 * x - 2,
             x**2 / 4 + 2,
         ]
@@ -776,6 +778,9 @@ def broucke_diagram(df: pd.DataFrame, html_save: str | None = None):
         "Period-Septuple (3)",
         "Period-Octuple (1)",
         "Period-Octuple (3)",
+        "Period-Nonuple (1)",
+        "Period-Nonuple (2)",
+        "Period-Nonuple (4)",
         "Tangent",
         "Hopf",
     ]
@@ -791,6 +796,9 @@ def broucke_diagram(df: pd.DataFrame, html_save: str | None = None):
         r"-2\cos(\frac{6\pi}{7})\alpha+2-4\cos^2(\frac{6\pi}{7})",
         r"-\sqrt{2}\alpha",
         r"\sqrt{2}\alpha",
+        r"-2\cos(\frac{2\pi}{9})\alpha+2-4\cos^2(\frac{2\pi}{9})",
+        r"-2\cos(\frac{4\pi}{9})\alpha+2-4\cos^2(\frac{4\pi}{9})",
+        r"-2\cos(\frac{8\pi}{9})\alpha+2-4\cos^2(\frac{8\pi}{9})",
         r"-2\alpha - 2",
         r"\frac{\alpha^2}{4}+2",
     ]
@@ -809,16 +817,20 @@ def broucke_diagram(df: pd.DataFrame, html_save: str | None = None):
         line=dict(color="white", width=0.75),
     )
 
+    hide = ["sextuple", "septuple", "octuple", "nonuple"]
     guides = [
         go.Scatter(
             x=x,
             y=y,
-            name=rf"{name}: $\beta={eqn}$",
+            name=rf"{name}",  #: $\beta={eqn}$",
             hoverinfo="text",
             text=name,
             mode="lines",
             hoverlabel=dict(namelength=-1, bgcolor="black", font_color="white"),
             line=dict(width=1),
+            visible=(
+                "legendonly" if any(term in name.lower() for term in hide) else True
+            ),
         )
         for y, name, eqn in zip(lines_cross, lines_names, eqns)
     ]
@@ -843,7 +855,8 @@ def broucke_diagram(df: pd.DataFrame, html_save: str | None = None):
     )
     fig.update_xaxes(exponentformat="power")
     fig.update_yaxes(exponentformat="power")
-    fig.show()
+    if show:
+        fig.show()
 
     if html_save is not None:
         fig.write_html(html_save, include_plotlyjs="cdn")

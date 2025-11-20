@@ -1,4 +1,6 @@
 from dynamicslib.targeter import *
+from typing import List
+from tqdm.auto import tqdm
 
 
 def arclen_cont(
@@ -179,6 +181,7 @@ def find_bif(
     bisect_tol: float = 1e-5,
     bif_type: str | Tuple[int, int] | Tuple[int] = "tangent",
     debug: bool = False,
+    scale: float = 5,
 ) -> Tuple[NDArray, NDArray]:
     """Find bifurcation using Broucke stability
 
@@ -264,12 +267,12 @@ def find_bif(
                     print(f"BIFURCATING @ X={X} in the direction of {tangent}")
                     return X, tangent
                 else:  # search backward
-                    s /= -5
+                    s /= -scale
             else:
                 skip -= 1
 
         if debug:
-            print(func_vals[-1], func_vals[-2], s)
+            print(func_vals[-1], func_vals[-2], s, X)
 
 
 # def find_per_mult(

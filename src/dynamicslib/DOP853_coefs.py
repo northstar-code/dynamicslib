@@ -208,3 +208,6 @@ C = np.ascontiguousarray(C)
 D = np.ascontiguousarray(D)
 E3 = np.ascontiguousarray(E3)
 E5 = np.ascontiguousarray(E5)
+
+A_EXTRA = A[n_stages + 1:]
+C_EXTRA = C[n_stages + 1:]
