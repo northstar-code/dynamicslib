@@ -70,7 +70,7 @@ def eom(
 
     g1 = -r41vec * (1 - mu) / r41mag**3
     g2 = -r42vec * mu / r42mag**3
-    g3 = -r43vec * mu3 / r43mag**3 + r3 * mu3 / a3**3
+    g3 = -r43vec * mu3 / r43mag**3 - r3 * mu3 / a3**3
     accel = g1 + g2 + scale * g3 + np.array([2 * vy + x, -2 * vx + y, 0])
     return np.concat((state[3:], accel))
 
