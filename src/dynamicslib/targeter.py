@@ -1,46 +1,4 @@
-from dynamicslib.common import *
 from dynamicslib.integrator import *
-
-
-# %% continuation
-def f_df_CR3_single(
-    X: NDArray,
-    X2xtf: Callable,
-    dF_func: Callable,
-    f_func: Callable,
-    full_period=False,
-    mu: float = muEM,
-    int_tol: float = 1e-10,
-) -> Tuple[NDArray, NDArray, NDArray]:
-    x0, tf = X2xtf(X)
-    xstmIC = np.array([*x0, *np.eye(6).flatten()])
-    ts, ys, _ = dop853(
-        coupled_stm_eom,
-        (0.0, tf if full_period else tf / 2),
-        xstmIC,
-        int_tol,
-        int_tol,
-        init_step=0.05,
-        args=(mu,),
-    )
-    xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
-    xf = np.array(xf)
-    eomf = eom(0, xf, mu)
-
-    dF = dF_func(eomf, stm)
-    f = f_func(x0, tf, xf)
-
-    if not full_period:
-        G = np.diag([1, -1, 1, -1, 1, -1])
-        Omega = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 0]])
-        I = np.identity(3)
-        O = np.zeros((3, 3))
-        mtx1 = np.block([[O, -I], [I, -2 * Omega]])
-        mtx2 = np.block([[-2 * Omega, I], [-I, O]])
-        stm_full = G @ mtx1 @ stm.T @ mtx2 @ G @ stm
-    else:
-        stm_full = stm
-    return f, dF, stm_full
 
 
 def dc_arclen(
@@ -52,8 +10,8 @@ def dc_arclen(
     modified: bool = True,
     max_iter: int | None = None,
     fudge: float | None = None,
+    max_step: float | None = None,
     debug: bool = False,
-    normalize: bool = False,
     # maxstep: float | None = None,
 ) -> Tuple[NDArray, NDArray, NDArray]:
     """Pseudoarclength continuation differential corrector. The modified algorithm has a full step size of s, rather than projected step size.
@@ -92,8 +50,8 @@ def dc_arclen(
         G = np.array([*f, lastG])
         dG = np.vstack((dF, lastDG))
         dX = -np.linalg.inv(dG) @ G
-        if normalize:
-            dX /= np.linalg.norm(dX)
+        if max_step is not None and np.linalg.norm(dX) > max_step:
+            dX *= max_step / np.linalg.norm(dX)
         X += dX * fudge
         if debug:
             print(niters, dX)
@@ -102,11 +60,12 @@ def dc_arclen(
     return X, dF, stm_full
 
 
-def dc_npc(
+def dc_square(
     X_guess: NDArray,
     f_df_func: Callable,
     tol: float = 1e-8,
-    fudge: float = 1,
+    fudge: float = 1.0,
+    max_step: float | None = None,
     debug: bool = False,
     max_iter: int | None = None,
 ) -> Tuple[NDArray, NDArray, NDArray]:
@@ -140,6 +99,8 @@ def dc_npc(
             raise RuntimeError("Exceeded maximum iterations")
         f, dF, stm_full = f_df_func(X)
         dX = -np.linalg.inv(dF) @ f
+        if max_step is not None and np.linalg.norm(dX) > max_step:
+            dX *= max_step / np.linalg.norm(dX)
         X += fudge * dX
         niters += 1
         if debug:
@@ -152,7 +113,8 @@ def dc_underconstrained(
     X_guess: NDArray,
     f_df_func: Callable,
     tol: float = 1e-8,
-    fudge: float = 1,
+    fudge: float = 1.0,
+    max_step: float | None = None,
     debug: bool = False,
     max_iter: int | None = None,
 ) -> Tuple[NDArray, NDArray, NDArray]:
@@ -183,6 +145,8 @@ def dc_underconstrained(
             raise RuntimeError("Exceeded maximum iterations")
         f, dF, stm_full = f_df_func(X)
         dX = -np.linalg.pinv(dF) @ f
+        if max_step is not None and np.linalg.norm(dX) > max_step:
+            dX *= max_step / np.linalg.norm(dX)
         X += fudge * dX
         niters += 1
         if debug:

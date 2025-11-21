@@ -104,7 +104,6 @@ def arclen_cont(
     return Xs, eig_vals
 
 
-# WIP
 def natural_param_cont(
     X0: NDArray,
     f_df_stm_func: Callable[
@@ -158,7 +157,9 @@ def natural_param_cont(
     i = 0
     # ensure that the stopping condition hasnt been satisfied
     while i < N and not (param > param0 and stopfunc(X, eig_vals[-1], eig_vals[-2])):
-        X, dF, stm = dc_npc(X + dparam, f_df_stm_func(param), tol, fudge, debug)
+        X, dF, stm = dc_square(
+            X + dparam, f_df_stm_func(param), tol, fudge, None, debug
+        )
         params.append(param)
         Xs.append(X)
         eig_vals.append(np.linalg.eigvals(stm))
@@ -244,9 +245,7 @@ def find_bif(
     while True:
         if np.dot(tangent, tangent_prev) < 0:
             tangent *= -1
-        X, dF, stm = dc_arclen(
-            X, np.sign(s) * tangent, f_df_stm_func, abs(s), targ_tol, modified=True
-        )
+        X, dF, stm = dc_arclen(X, np.sign(s) * tangent, f_df_stm_func, abs(s), targ_tol)
 
         Xs.append(X.copy())
         tangent_prev = tangent
