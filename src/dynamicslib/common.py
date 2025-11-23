@@ -197,6 +197,18 @@ def prop_ic(
     x, y, z = dense_sol.T[:3]
     return x, y, z
 
+def prop_ic_fullstate(
+    X: NDArray,
+    X2xtf_func: Callable,
+    mu: float = muEM,
+    int_tol=1e-12,
+    density_mult: int = 2,
+):
+    x0, tf = X2xtf_func(X)
+    ts, xs, fs = dop853(eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,))
+    ts, dense_sol = interp_hermite(ts, xs.T, fs.T, n_mult=density_mult)
+    return dense_sol.T
+
 
 # shortcut to get JC and tf from X
 def get_JC_tf(X: NDArray, X2xtf_func: Callable, mu: float = muEM):
