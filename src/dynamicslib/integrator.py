@@ -105,11 +105,6 @@ def interp_hermite(
             dxdt1 = dxdt[j + 1]
             newterms = Hermite_interp_interval(ts, t0, t1, x0, x1, dxdt0, dxdt1)
             x_eval = np.concatenate((x_eval, newterms))
-        # i0 = i1
-
-    # if flip:
-    #     t_eval = t_eval[::-1]
-    #     x_eval = x_eval[::-1]
 
     return t_eval, x_eval
 

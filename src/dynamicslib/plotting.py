@@ -8,10 +8,11 @@ import plotly.express as px
 import pandas as pd
 from IPython.display import display, HTML
 import plotly
+from numba import njit
 from base64 import b64encode
 from dash import Dash, dcc, html, Input, Output, callback
 
-from dynamicslib.consts import muEM
+from dynamicslib.consts import muEM, LU, TU
 from dynamicslib.common import get_Lpts
 
 plotly.offline.init_notebook_mode()
@@ -20,6 +21,113 @@ display(
         '<script type="text/javascript" async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-MML-AM_SVG"></script>'
     )
 )
+
+
+@njit(cache=True)
+def get_rotm(theta: float, inc: float = 0) -> NDArray[np.float64]:
+    """Support function for to_eci, gets rotation matrix for 13 rotation (to model an inclination + truan rotation)
+
+    Args:
+        theta (float): True anomaly (angle 2, about axis 3)
+        inc (float, optional): Inclination (angle 1, about axis 1). Defaults to 0.
+
+    Returns:
+        NDArray[np.float64]: rotation matrix
+    """
+    r1 = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, np.cos(inc), -np.sin(inc)],
+            [0.0, np.sin(inc), np.cos(inc)],
+        ]
+    )
+    r3 = np.array(
+        [
+            [np.cos(theta), -np.sin(theta), 0.0],
+            [np.sin(theta), np.cos(theta), 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+    return r1 @ r3
+
+
+@njit(cache=True)
+def to_eci(
+    xs: NDArray[np.float64],
+    ts: NDArray[np.float64],
+    theta0: float = 0,
+    inc_rad: float = 0,
+    LU=LU,
+    TU=TU,
+    mu: float = muEM,
+) -> NDArray[np.float64]:
+    """Converts CR3BP coordinates to ECI coordinates
+
+    Args:
+        xs (NDArray[np.float64]): state vectors (N, 6)
+        ts (NDArray[np.float64]): times (6,)
+        t0 (float, optional): initial time. Defaults to 0.
+        revs (int, optional): number or revs of the trajectory (if greater than 1, will repeat). Defaults to 1.
+        inc_rad (float, optional): inclination. Can be ignored unless you are specifying a specific ECI frame. Defaults to 0.
+        LU (_type_, optional): Length unit [km]. Defaults to package-defined LU.
+        TU (_type_, optional): Time Unit [sec]. Defaults to package-defined TU.
+        mu (float, optional): mass ratio. Defaults to muEM.
+
+    Returns:
+        NDArray[np.float64]: ECI outputs
+    """
+    # assert np.size(xs, 1) == 6  # make sure 6 cols
+    omega = 1
+    rot_angs = omega * ts + theta0
+    pos_CR3BP = xs[:, :3]
+    vel_CR3BP = xs[:, 3:]
+    # Earth-Centered ND Rotating
+    pos_ECNDR = pos_CR3BP + np.array([mu, 0, 0])
+    vel_ECNDR = vel_CR3BP
+
+    # Earth-Centered ND Inertial
+    # rot_mtxs = np.empty((len(ts), 3, 3))
+    vel_ECNDI = np.empty((len(ts), 3))
+    pos_ECNDI = np.empty((len(ts), 3))
+    for i, ang in enumerate(rot_angs):
+        rotm = get_rotm(ang, inc_rad)
+        # earth-centered nondim rotating plus omega x r
+        vel_localframe = vel_ECNDR[i] + np.array([-pos_ECNDR[i, 1], pos_ECNDR[i, 0], 0])
+        vel_ECNDI[i] = rotm @ vel_localframe
+        pos_ECNDI[i] = rotm @ pos_ECNDR[i]
+
+    pos_ECI = pos_ECNDI * LU
+    vel_ECI = vel_ECNDI * LU / TU
+
+    xs_ECI = np.hstack((pos_ECI, vel_ECI))
+    return xs_ECI
+
+
+@njit(cache=True)
+def to_lci(
+    xs: NDArray[np.float64],
+    ts: NDArray[np.float64],
+    theta0: float = 0,
+    inc_rad: float = 0,
+    LU=LU,
+    TU=TU,
+    mu: float = muEM,
+):
+    """Converts CR3BP coordinates to LCI coordinates
+
+    Args:
+        xs (NDArray[np.float64]): state vectors (N, 6)
+        ts (NDArray[np.float64]): times (6,)
+        t0 (float, optional): initial time. Defaults to 0.
+        inc_rad (float, optional): inclination. Can be ignored unless you are specifying a specific LCI frame. Defaults to 0.
+        LU (_type_, optional): Length unit [km]. Defaults to package-defined LU.
+        TU (_type_, optional): Time Unit [sec]. Defaults to package-defined TU.
+        mu (float, optional): mass ratio. Defaults to muEM.
+
+    Returns:
+        NDArray[np.float64]: ECI outputs
+    """
+    return to_eci(xs, ts, theta0, inc_rad, LU, TU, mu - 1)
 
 
 # def matplotlib_family(
@@ -160,7 +268,7 @@ def darken_color(color_str, scale=0.75):
 
 def lighten_color(color_str, scale=0.75):
     vals = [
-        (float(st) + scale*255) / ((1 + scale))
+        (float(st) + scale * 255) / ((1 + scale))
         for st in color_str.rstrip(")").lstrip("rgb(").split(",")
     ]
     return f"rgb({vals[0]}, {vals[1]}, {vals[2]})"

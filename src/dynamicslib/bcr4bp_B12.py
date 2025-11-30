@@ -163,7 +163,7 @@ def homotopy_npc(
     f_df_stm_func: Callable[[NDArray, float], Tuple[NDArray, NDArray, NDArray]],
     N: int = 100,
     tol: float = 1e-10,
-    fudge: float = 1,
+    fudge: float = 1.0,
     max_step: float | None = None,
     debug: bool = False,
 ) -> Tuple[List, List, List]:
@@ -191,7 +191,7 @@ def homotopy_npc(
     X = X0.copy()
     Xg = X
 
-    scales = list(np.linspace(0, 1, 1 + N))[1:]
+    scales = list(np.linspace(0, 1, 1 + N))
     _, _, stm = f_df_stm_func(X, 0.0)
 
     Xs = [X]
@@ -200,7 +200,7 @@ def homotopy_npc(
     bar = tqdm(total=N)
     i = 0
     # ensure that the stopping condition hasnt been satisfied
-    for scale in scales:
+    for scale in scales[1:]:
         X, _, stm = dc_square(
             Xg, lambda x: f_df_stm_func(x, scale), tol, fudge, max_step, debug
         )
