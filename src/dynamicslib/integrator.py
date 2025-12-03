@@ -250,7 +250,7 @@ def rkf45(
 
 
 # shamelessly stolen from scipy and adapted
-@njit(cache=True)
+@njit(cache=True, parallel=True)
 def dop853(
     func: Callable,
     t_span: Tuple[float, float],

@@ -1,7 +1,12 @@
+import threading
+import queue
 import numpy as np
 from numpy.typing import NDArray
-from typing import Callable, Tuple
-from numba import njit
+from typing import Callable, Tuple, List, Any
+from numba import njit, prange
+from numba import types
+from scipy.integrate import solve_ivp
+from numba.typed import Dict
 
 from dynamicslib.consts import muEM
 from dynamicslib.integrator import dop853, interp_hermite
@@ -85,7 +90,6 @@ def get_A(state: NDArray[np.floating], mu: float = muEM) -> NDArray[np.floating]
     A2 = np.concatenate((Uxx, Omega), axis=1)
     A = np.concatenate((A1, A2), axis=0)
     return A
-
 
 
 @njit(cache=True)
@@ -197,6 +201,7 @@ def prop_ic(
     x, y, z = dense_sol.T[:3]
     return x, y, z
 
+
 def prop_ic_fullstate(
     X: NDArray,
     X2xtf_func: Callable,
@@ -210,12 +215,125 @@ def prop_ic_fullstate(
     return dense_sol.T
 
 
+def manifold_stepoffs(
+    x0: NDArray,
+    period: float,
+    N: int = 25,
+    s: float = 1e-6,
+    mu: float = muEM,
+    int_tol=1e-12,
+) -> Tuple[Tuple[NDArray[np.floating]], Tuple[NDArray[np.floating]]]:
+    """Get manifold start points. Returns 4N points (N of each stable half
+    and another N of each unstable half). Return order is (s+ s-), (u+ u-)
+
+    Args:
+        x0 (NDArray): Nominal initial condition
+        period (float): Period of the orbot
+        N (int, optional): Number of stepoff points, evenly spaced in time. Defaults to 25.
+        s (float, optional): Stepoff distance. Defaults to 1e-6.
+        mu (float, optional): Gravitational parameter. Defaults to muEM.
+        int_tol (_type_, optional): Integration tolerance. Defaults to 1e-12.
+
+    Returns:
+        Tuple, Tuple: Manifold ICs. Can be propagated elsewhere
+    """
+    sv0 = np.append(x0, np.eye(6).flatten())
+    te = np.linspace(0, period, N + 1)
+    ode_out = solve_ivp(
+        coupled_stm_eom,
+        (0.0, period),
+        sv0,
+        atol=int_tol,
+        rtol=int_tol,
+        t_eval=te,
+        args=(mu,),
+    )
+    svs = ode_out.y.T[:-1]
+    xs = [sv[:6] for sv in svs]
+    mono = ode_out.y.T[-1, 6:].reshape(6, 6)
+    stms = [sv[6:].reshape(6, 6) for sv in svs]
+    monodromies = [stm @ mono @ np.linalg.inv(stm) for stm in stms]
+    eigs = [np.linalg.eig(phi) for phi in monodromies]
+    # stable eigenvectors
+    vecs_s = [e.eigenvectors[:, np.argmin(np.abs(e.eigenvalues))].real for e in eigs]
+    # unstable eigenvectors
+    vecs_u = [e.eigenvectors[:, np.argmax(np.abs(e.eigenvalues))].real for e in eigs]
+
+    # Find ICs
+    # stable halves
+    x0s_s1 = tuple([x + vec * s for x, vec in zip(xs, vecs_s)])
+    x0s_s2 = tuple([x - vec * s for x, vec in zip(xs, vecs_s)])
+    # unstable halves
+    x0s_u1 = tuple([x + vec * s for x, vec in zip(xs, vecs_u)])
+    x0s_u2 = tuple([x - vec * s for x, vec in zip(xs, vecs_u)])
+
+    return x0s_s1 + x0s_s2, x0s_u1 + x0s_u2
+
+
+def integrate_one(
+    lock: threading.Lock,
+    dict_out: Dict,
+    index: Any,
+    tf: float,
+    x0: NDArray,
+    int_tol: float,
+    events: Callable | List,
+    mu: float,
+):
+    try:
+        iter(events)
+        pass
+    except TypeError:
+        events = [events]
+
+    ode_out = solve_ivp(
+        eom,
+        (0.0, tf),
+        x0,
+        "DOP853",
+        atol=int_tol,
+        rtol=int_tol,
+        args=(mu,),
+        events=events,
+    )
+    with lock:
+        dict_out[index] = ode_out
+
+
+# Incredibly inefficient
+def prop_multiple(
+    x0s: NDArray,
+    event: Callable | List,
+    tfmax: float,
+    mu: float = muEM,
+    int_tol: float = 1e-10,
+):
+    dct_out = {}
+    N = len(x0s)
+    lock = threading.Lock()
+
+    threads = []
+    for ind in range(N):
+        x0 = x0s[ind]
+        args = (lock, dct_out, ind, tfmax, x0, int_tol, event, mu)
+        thread = threading.Thread(target=integrate_one, args=args)
+        threads.append(thread)
+
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    return dct_out
+
+
 # shortcut to get JC and tf from X
 def get_JC_tf(X: NDArray, X2xtf_func: Callable, mu: float = muEM):
     x0, tf = X2xtf_func(X)
     jc = jacobi_constant(x0, mu)
 
     return jc, tf
+
 
 # basic call
 def f_df_CR3_single(
