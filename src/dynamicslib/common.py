@@ -6,7 +6,7 @@ from typing import Callable, Tuple, List, Any
 from numba import njit, prange
 from numba import types
 from scipy.integrate import solve_ivp
-from numba.typed import Dict
+from scipy.integrate._ivp.ivp import OdeResult
 
 from dynamicslib.consts import muEM
 from dynamicslib.integrator import dop853, interp_hermite
@@ -155,6 +155,18 @@ def jacobi_constant(state: NDArray[np.floating], mu: float = muEM) -> float:
     return JC
 
 
+@njit(cache=True)
+def JCgrad(state: NDArray, mu: float = muEM) -> NDArray[np.floating]:
+    x, y, z = state[:3]
+    d1 = np.sqrt((x + mu) ** 2 + y**2 + z**2)
+    d2 = np.sqrt((x - 1 + mu) ** 2 + y**2 + z**2)
+    x2 = x - 1 + mu
+    x1 = x + mu
+    r1 = np.array([x1, y, z])
+    r2 = np.array([x2, y, z])
+    return -2 * mu / d2**3 * r2 - 2 * (1 - mu) / d1**3 * r1 + 2 * x
+
+
 # DEPRICATED: not really useful
 # def get_stab(eigval: float, eps: float = 1e-5) -> int:
 #     """Get stability modes of a single eigenvalue. Numeric codes are
@@ -272,14 +284,29 @@ def manifold_stepoffs(
 
 def integrate_one(
     lock: threading.Lock,
-    dict_out: Dict,
-    index: Any,
+    dict_out: dict,
+    index: int,
     tf: float,
     x0: NDArray,
-    int_tol: float,
     events: Callable | List,
     mu: float,
+    int_tol: float,
 ):
+    """Propagate multiple curves to a common set of event functions. Uses scipy propagator, so may not be great.
+
+    Args:
+        lock (threading.Lock): Thread lock to prevent simultaneous writes to dict
+        dictr_out (dict): dictionary to fill with outputs
+        index (int): Index to place result in dict
+        tf (float): Max integration time, in case event doesnt trigger. Also holds information about integration direction.
+        x0 (NDArray): Initial condition
+        events (Callable | List): Event function or event functions list. Must have signature (t, x, mu) -> float
+        mu (float, optional): Mass parameter. Defaults to muEM.
+        int_tol (float, optional): Integration tolerance. Defaults to 1e-10.
+
+    Returns:
+        dict[int, OdeResult]: Indexed results with ODE output
+    """
     try:
         iter(events)
         pass
@@ -300,14 +327,25 @@ def integrate_one(
         dict_out[index] = ode_out
 
 
-# Incredibly inefficient
 def prop_multiple(
-    x0s: NDArray,
-    event: Callable | List,
+    x0s: NDArray | List,
+    events: Callable | List,
     tfmax: float,
     mu: float = muEM,
     int_tol: float = 1e-10,
-):
+) -> dict[int, OdeResult]:
+    """Propagate multiple curves to a common set of event functions. Uses scipy propagator, so may not be great.
+
+    Args:
+        x0s (NDArray | List): List of initial conditions, ordered. Nx6
+        events (Callable | List): Event function or event functions list. Must have signature (t, x, mu) -> float
+        tfmax (float): Maximum final time, in case event never triggers
+        mu (float, optional): Mass parameter. Defaults to muEM.
+        int_tol (float, optional): Integration tolerance. Defaults to 1e-10.
+
+    Returns:
+        dict[int, OdeResult]: Indexed results with ODE output
+    """
     dct_out = {}
     N = len(x0s)
     lock = threading.Lock()
@@ -315,7 +353,7 @@ def prop_multiple(
     threads = []
     for ind in range(N):
         x0 = x0s[ind]
-        args = (lock, dct_out, ind, tfmax, x0, int_tol, event, mu)
+        args = (lock, dct_out, ind, tfmax, x0, events, mu, int_tol)
         thread = threading.Thread(target=integrate_one, args=args)
         threads.append(thread)
 
