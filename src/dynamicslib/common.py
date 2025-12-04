@@ -234,7 +234,16 @@ def manifold_stepoffs(
     s: float = 1e-6,
     mu: float = muEM,
     int_tol=1e-12,
-) -> Tuple[Tuple[NDArray[np.floating]], Tuple[NDArray[np.floating]]]:
+) -> Tuple[
+    Tuple[NDArray[np.floating], ...],
+    Tuple[NDArray[np.floating], ...],
+    Tuple[
+        Tuple[NDArray[np.floating], ...],
+        Tuple[NDArray[np.floating], ...],
+        Tuple[NDArray[np.floating], ...],
+        Tuple[NDArray[np.floating], ...],
+    ],
+]:
     """Get manifold start points. Returns 4N points (N of each stable half
     and another N of each unstable half). Return order is (s+ s-), (u+ u-)
 
@@ -279,7 +288,8 @@ def manifold_stepoffs(
     x0s_u1 = tuple([x + vec * s for x, vec in zip(xs, vecs_u)])
     x0s_u2 = tuple([x - vec * s for x, vec in zip(xs, vecs_u)])
 
-    return x0s_s1 + x0s_s2, x0s_u1 + x0s_u2
+    aux = (tuple(xs), tuple(monodromies), tuple(vecs_u), tuple(vecs_s))
+    return x0s_u1 + x0s_u2, x0s_s1 + x0s_s2, aux
 
 
 def integrate_one(
