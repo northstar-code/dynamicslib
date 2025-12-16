@@ -5,7 +5,7 @@ from numba import njit
 from tqdm.auto import tqdm
 
 from dynamicslib.consts import muEM, LU
-from dynamicslib.integrator import dop853
+from dynamicslib.integrate import dop853
 from dynamicslib.targeter import dc_square
 
 muEMS = 1.988416e30 / (5.9722e24 + 7.346e22)  # masses from Wiki

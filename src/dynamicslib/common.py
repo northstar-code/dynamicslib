@@ -9,7 +9,8 @@ from scipy.integrate import solve_ivp
 from scipy.integrate._ivp.ivp import OdeResult
 
 from dynamicslib.consts import muEM
-from dynamicslib.integrator import dop853, interp_hermite
+from dynamicslib.integrate import dop853
+from dynamicslib.interpolate import dop_interpolate
 
 
 # %% generic CR3BP stuff
@@ -208,9 +209,9 @@ def prop_ic(
     density_mult: int = 2,
 ):
     x0, tf = X2xtf_func(X)
-    ts, xs, fs = dop853(eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,))
-    ts, dense_sol = interp_hermite(ts, xs.T, fs.T, n_mult=density_mult)
-    x, y, z = dense_sol.T[:3]
+    ts, xs, fs, Fs = dop853(eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,))
+    ts,xs = dop_interpolate(ts, xs, Fs, n_mult=density_mult)
+    x, y, z = xs[:3]
     return x, y, z
 
 
@@ -222,9 +223,10 @@ def prop_ic_fullstate(
     density_mult: int = 2,
 ):
     x0, tf = X2xtf_func(X)
-    ts, xs, fs = dop853(eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,))
-    ts, dense_sol = interp_hermite(ts, xs.T, fs.T, n_mult=density_mult)
-    return dense_sol.T
+    ts, xs, _, Fs = dop853(eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,))
+    ts,xs = dop_interpolate(ts, xs, Fs, n_mult=density_mult)
+        
+    return xs
 
 
 def manifold_stepoffs(
