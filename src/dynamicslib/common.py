@@ -9,7 +9,8 @@ from scipy.integrate import solve_ivp
 from scipy.integrate._ivp.ivp import OdeResult
 
 from dynamicslib.consts import muEM
-from dynamicslib.integrator import dop853, interp_hermite
+from dynamicslib.integrate import dop853
+from dynamicslib.interpolate import dop_interpolate
 
 
 # %% generic CR3BP stuff
@@ -127,22 +128,6 @@ def coupled_stm_eom(
     return dstate
 
 
-# DEPRICATED: only useful for scipy integrators that use jacobians
-# @njit(cache=True)
-# def coupled_stm_eom_jac(
-#     _, state: NDArray[np.floating], mu: float = muEM
-# ) -> NDArray[np.floating]:
-#     # fmt: off
-#     x, y, z, vx, vy, vz, Phi11, Phi12, Phi13, Phi14, Phi15, Phi16, Phi21, Phi22, Phi23, Phi24, Phi25, Phi26, Phi31, Phi32, Phi33, Phi34, Phi35, Phi36, Phi41, Phi42, Phi43, Phi44, Phi45, Phi46, Phi51, Phi52, Phi53, Phi54, Phi55, Phi56, Phi61, Phi62, Phi63, Phi64, Phi65, Phi66 = state
-#     x1 = x+mu
-#     x2 = x+mu-1
-#     r1 = np.sqrt(x1**2+y**2+z**2)
-#     r2 = np.sqrt(x2**2+y**2+z**2)
-#     out = np.array([x, y, z, -mu*x2/r2**3 + 2*vy + x + x1*(mu - 1)/r1**3, -mu*y/r2**3 - 2*vx + y + y*(mu - 1)/r1**3, -mu*z/r2**3 + z*(mu - 1)/r1**3, Phi41, Phi42, Phi43, Phi44, Phi45, Phi46, Phi51, Phi52, Phi53, Phi54, Phi55, Phi56, Phi61, Phi62, Phi63, Phi64, Phi65, Phi66, Phi11*(-mu/r2**3 + 3*mu*x2**2/r2**5 + 1 - (1 - mu)/r1**3 + x1**2*(3 - 3*mu)/r1**5) + Phi21*(3*mu*x2*y/r2**5 + x1*y*(3 - 3*mu)/r1**5) + Phi31*(3*mu*x2*z/r2**5 + x1*z*(3 - 3*mu)/r1**5) + 2*Phi51, Phi12*(-mu/r2**3 + 3*mu*x2**2/r2**5 + 1 - (1 - mu)/r1**3 + x1**2*(3 - 3*mu)/r1**5) + Phi22*(3*mu*x2*y/r2**5 + x1*y*(3 - 3*mu)/r1**5) + Phi32*(3*mu*x2*z/r2**5 + x1*z*(3 - 3*mu)/r1**5) + 2*Phi52, Phi13*(-mu/r2**3 + 3*mu*x2**2/r2**5 + 1 - (1 - mu)/r1**3 + x1**2*(3 - 3*mu)/r1**5) + Phi23*(3*mu*x2*y/r2**5 + x1*y*(3 - 3*mu)/r1**5) + Phi33*(3*mu*x2*z/r2**5 + x1*z*(3 - 3*mu)/r1**5) + 2*Phi53, Phi14*(-mu/r2**3 + 3*mu*x2**2/r2**5 + 1 - (1 - mu)/r1**3 + x1**2*(3 - 3*mu)/r1**5) + Phi24*(3*mu*x2*y/r2**5 + x1*y*(3 - 3*mu)/r1**5) + Phi34*(3*mu*x2*z/r2**5 + x1*z*(3 - 3*mu)/r1**5) + 2*Phi54, Phi15*(-mu/r2**3 + 3*mu*x2**2/r2**5 + 1 - (1 - mu)/r1**3 + x1**2*(3 - 3*mu)/r1**5) + Phi25*(3*mu*x2*y/r2**5 + x1*y*(3 - 3*mu)/r1**5) + Phi35*(3*mu*x2*z/r2**5 + x1*z*(3 - 3*mu)/r1**5) + 2*Phi55, Phi16*(-mu/r2**3 + 3*mu*x2**2/r2**5 + 1 - (1 - mu)/r1**3 + x1**2*(3 - 3*mu)/r1**5) + Phi26*(3*mu*x2*y/r2**5 + x1*y*(3 - 3*mu)/r1**5) + Phi36*(3*mu*x2*z/r2**5 + x1*z*(3 - 3*mu)/r1**5) + 2*Phi56, Phi11*(3*mu*x2*y/r2**5 + x1*y*(3 - 3*mu)/r1**5) + Phi21*(-mu/r2**3 + 3*mu*y**2/r2**5 + 1 - (1 - mu)/r1**3 + y**2*(3 - 3*mu)/r1**5) + Phi31*(3*mu*y*z/r2**5 + y*z*(3 - 3*mu)/r1**5) - 2*Phi41, Phi12*(3*mu*x2*y/r2**5 + x1*y*(3 - 3*mu)/r1**5) + Phi22*(-mu/r2**3 + 3*mu*y**2/r2**5 + 1 - (1 - mu)/r1**3 + y**2*(3 - 3*mu)/r1**5) + Phi32*(3*mu*y*z/r2**5 + y*z*(3 - 3*mu)/r1**5) - 2*Phi42, Phi13*(3*mu*x2*y/r2**5 + x1*y*(3 - 3*mu)/r1**5) + Phi23*(-mu/r2**3 + 3*mu*y**2/r2**5 + 1 - (1 - mu)/r1**3 + y**2*(3 - 3*mu)/r1**5) + Phi33*(3*mu*y*z/r2**5 + y*z*(3 - 3*mu)/r1**5) - 2*Phi43, Phi14*(3*mu*x2*y/r2**5 + x1*y*(3 - 3*mu)/r1**5) + Phi24*(-mu/r2**3 + 3*mu*y**2/r2**5 + 1 - (1 - mu)/r1**3 + y**2*(3 - 3*mu)/r1**5) + Phi34*(3*mu*y*z/r2**5 + y*z*(3 - 3*mu)/r1**5) - 2*Phi44, Phi15*(3*mu*x2*y/r2**5 + x1*y*(3 - 3*mu)/r1**5) + Phi25*(-mu/r2**3 + 3*mu*y**2/r2**5 + 1 - (1 - mu)/r1**3 + y**2*(3 - 3*mu)/r1**5) + Phi35*(3*mu*y*z/r2**5 + y*z*(3 - 3*mu)/r1**5) - 2*Phi45, Phi16*(3*mu*x2*y/r2**5 + x1*y*(3 - 3*mu)/r1**5) + Phi26*(-mu/r2**3 + 3*mu*y**2/r2**5 + 1 - (1 - mu)/r1**3 + y**2*(3 - 3*mu)/r1**5) + Phi36*(3*mu*y*z/r2**5 + y*z*(3 - 3*mu)/r1**5) - 2*Phi46, Phi11*(3*mu*x2*z/r2**5 + x1*z*(3 - 3*mu)/r1**5) + Phi21*(3*mu*y*z/r2**5 + y*z*(3 - 3*mu)/r1**5) + Phi31*(-mu/r2**3 + 3*mu*z**2/r2**5 - (1 - mu)/r1**3 + z**2*(3 - 3*mu)/r1**5), Phi12*(3*mu*x2*z/r2**5 + x1*z*(3 - 3*mu)/r1**5) + Phi22*(3*mu*y*z/r2**5 + y*z*(3 - 3*mu)/r1**5) + Phi32*(-mu/r2**3 + 3*mu*z**2/r2**5 - (1 - mu)/r1**3 + z**2*(3 - 3*mu)/r1**5), Phi13*(3*mu*x2*z/r2**5 + x1*z*(3 - 3*mu)/r1**5) + Phi23*(3*mu*y*z/r2**5 + y*z*(3 - 3*mu)/r1**5) + Phi33*(-mu/r2**3 + 3*mu*z**2/r2**5 - (1 - mu)/r1**3 + z**2*(3 - 3*mu)/r1**5), Phi14*(3*mu*x2*z/r2**5 + x1*z*(3 - 3*mu)/r1**5) + Phi24*(3*mu*y*z/r2**5 + y*z*(3 - 3*mu)/r1**5) + Phi34*(-mu/r2**3 + 3*mu*z**2/r2**5 - (1 - mu)/r1**3 + z**2*(3 - 3*mu)/r1**5), Phi15*(3*mu*x2*z/r2**5 + x1*z*(3 - 3*mu)/r1**5) + Phi25*(3*mu*y*z/r2**5 + y*z*(3 - 3*mu)/r1**5) + Phi35*(-mu/r2**3 + 3*mu*z**2/r2**5 - (1 - mu)/r1**3 + z**2*(3 - 3*mu)/r1**5), Phi16*(3*mu*x2*z/r2**5 + x1*z*(3 - 3*mu)/r1**5) + Phi26*(3*mu*y*z/r2**5 + y*z*(3 - 3*mu)/r1**5) + Phi36*(-mu/r2**3 + 3*mu*z**2/r2**5 - (1 - mu)/r1**3 + z**2*(3 - 3*mu)/r1**5)])
-#     # fmt: on
-#     return out
-
-
 @njit(cache=True)
 def jacobi_constant(state: NDArray[np.floating], mu: float = muEM) -> float:
     x, y, z = state[:3]
@@ -200,18 +185,20 @@ def JCgrad(state: NDArray, mu: float = muEM) -> NDArray[np.floating]:
 
 
 # shortcut to get x,y,z from X
-def prop_ic(
-    X: NDArray,
-    X2xtf_func: Callable,
-    mu: float = muEM,
-    int_tol=1e-12,
-    density_mult: int = 2,
-):
-    x0, tf = X2xtf_func(X)
-    ts, xs, fs = dop853(eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,))
-    ts, dense_sol = interp_hermite(ts, xs.T, fs.T, n_mult=density_mult)
-    x, y, z = dense_sol.T[:3]
-    return x, y, z
+# def prop_ic(
+#     X: NDArray,
+#     X2xtf_func: Callable,
+#     mu: float = muEM,
+#     int_tol=1e-12,
+#     density_mult: int = 2,
+# ):
+#     x0, tf = X2xtf_func(X)
+#     ts, xs, fs, Fs = dop853(
+#         eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,), dense_output=True
+#     )
+#     ts, xs = dop_interpolate(ts, xs.T, Fs, n_mult=density_mult)
+#     x, y, z = xs[:3]
+#     return x, y, z
 
 
 def prop_ic_fullstate(
@@ -222,9 +209,11 @@ def prop_ic_fullstate(
     density_mult: int = 2,
 ):
     x0, tf = X2xtf_func(X)
-    ts, xs, fs = dop853(eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,))
-    ts, dense_sol = interp_hermite(ts, xs.T, fs.T, n_mult=density_mult)
-    return dense_sol.T
+    ts, xs1, _, Fs = dop853(
+        eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,), dense_output=True
+    )
+    ts, xs = dop_interpolate(ts, xs1.T, Fs, n_mult=density_mult)
+    return xs
 
 
 def manifold_stepoffs(
