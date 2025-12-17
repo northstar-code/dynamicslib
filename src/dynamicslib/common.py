@@ -185,18 +185,20 @@ def JCgrad(state: NDArray, mu: float = muEM) -> NDArray[np.floating]:
 
 
 # shortcut to get x,y,z from X
-def prop_ic(
-    X: NDArray,
-    X2xtf_func: Callable,
-    mu: float = muEM,
-    int_tol=1e-12,
-    density_mult: int = 2,
-):
-    x0, tf = X2xtf_func(X)
-    ts, xs, fs, Fs = dop853(eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,))
-    ts, xs = dop_interpolate(ts, xs, Fs, n_mult=density_mult)
-    x, y, z = xs[:3]
-    return x, y, z
+# def prop_ic(
+#     X: NDArray,
+#     X2xtf_func: Callable,
+#     mu: float = muEM,
+#     int_tol=1e-12,
+#     density_mult: int = 2,
+# ):
+#     x0, tf = X2xtf_func(X)
+#     ts, xs, fs, Fs = dop853(
+#         eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,), dense_output=True
+#     )
+#     ts, xs = dop_interpolate(ts, xs.T, Fs, n_mult=density_mult)
+#     x, y, z = xs[:3]
+#     return x, y, z
 
 
 def prop_ic_fullstate(
@@ -207,9 +209,10 @@ def prop_ic_fullstate(
     density_mult: int = 2,
 ):
     x0, tf = X2xtf_func(X)
-    ts, xs, _, Fs = dop853(eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,))
-    ts, xs = dop_interpolate(ts, xs, Fs, n_mult=density_mult)
-
+    ts, xs1, _, Fs = dop853(
+        eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,), dense_output=True
+    )
+    ts, xs = dop_interpolate(ts, xs1.T, Fs, n_mult=density_mult)
     return xs
 
 

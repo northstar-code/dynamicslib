@@ -141,7 +141,6 @@ def dop853_dense_extra(
     Returns:
         NDArray[np.floating]: Filled function evaluation matrix
     """
-
     for smod in range(3):
         s = smod + coefs.n_stages + 1
         a = coefs.A_EXTRA[smod]
@@ -249,14 +248,14 @@ def dop853(
 
         # When the step is accepted
         if error <= 1:
+            if dense_output:
+                F = dop853_dense_extra(func, h, t, xnew, x, K[-1], K_ext, n, args)
+                Fs = concatenate((Fs, expand_dims(F, axis=0)))
             t += h
             x = xnew
             ts = concatenate((ts, array([t], dtype=float64)))
             xs = concatenate((xs, expand_dims(x, axis=0)))
             fs = concatenate((fs, expand_dims(K[-1], axis=0)))
-            if dense_output:
-                F = dop853_dense_extra(func, h, t, xnew, x, K[-1], K_ext, n, args)
-                Fs = concatenate((Fs, expand_dims(F, axis=0)))
 
         h *= hscale
 

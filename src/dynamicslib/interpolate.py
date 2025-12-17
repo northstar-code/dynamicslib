@@ -140,7 +140,7 @@ def dop_interp_step(
     return xs
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def dop_interpolate(
     ts: NDArray,
     xs: NDArray,
@@ -177,14 +177,19 @@ def dop_interpolate(
         assert t_eval[0] >= ts[0] and t_eval[-1] <= ts[-1]
 
     x_eval = np.empty((0, len(xs[0])), dtype=np.float64)
+    # tlst = []
     for j in range(len(ts) - 1):
         t0 = ts[j]
         t1 = ts[j + 1]
 
-        if j == 0:
+        if j == len(ts) - 2:
             ts_interval = t_eval[np.logical_and(t0 <= t_eval, t_eval <= t1)].copy()
         else:
-            ts_interval = t_eval[np.logical_and(t0 < t_eval, t_eval <= t1)].copy()
+            ts_interval = t_eval[np.logical_and(t0 <= t_eval, t_eval < t1)].copy()
+        # if j == len(ts) - 2:
+        #     ts_interval = np.append(ts_interval, t1)
+        # # for tt in ts_interval:
+        #     tlst.append(tt)
 
         if len(ts_interval):
             x0 = xs[j]
@@ -192,4 +197,4 @@ def dop_interpolate(
             newterms = dop_interp_step(ts_interval, x0, t0, t1, Fs_interval)
             x_eval = np.concatenate((x_eval, newterms))
 
-    return t_eval, x_eval.T
+    return t_eval, x_eval.T  # , tlst
