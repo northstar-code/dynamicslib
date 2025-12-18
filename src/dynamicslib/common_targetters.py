@@ -78,7 +78,7 @@ class JC_fixed_spatial_perpendicular:
         x0 = self.get_x0(X)
         tf = self.get_tf(X)
         xstmIC = np.array([*x0, *np.eye(6).flatten()])
-        ts, ys, _ = dop853(
+        ts, ys, _, _ = dop853(
             coupled_stm_eom,
             (0.0, tf / 2),
             xstmIC,
@@ -237,7 +237,7 @@ class heterclinic:
         tf_s = self.get_tf_s(X)
         tf_u = self.get_tf_u(X)
         sv0 = np.array([*x0_s, *np.eye(6).flatten()])
-        ts, ys, _ = dop853(
+        ts, ys, _, _ = dop853(
             coupled_stm_eom,
             (0.0, tf_s),
             sv0,
@@ -250,7 +250,7 @@ class heterclinic:
         eom0_s = eom(0.0, x0_s, self.mu)
 
         sv0 = np.array([*x0_u, *np.eye(6).flatten()])
-        ts, ys, _ = dop853(
+        ts, ys, _, _ = dop853(
             coupled_stm_eom,
             (0.0, tf_u),
             sv0,
@@ -342,7 +342,7 @@ class heterclinic_mod:
         tf_u = self.get_tf_u(X)
         # print(x0_s)
         sv0 = np.array([*x0_s, *np.eye(6).flatten()])
-        ts, ys, _ = dop853(
+        ts, ys, _, _ = dop853(
             coupled_stm_eom,
             (0.0, tf_s),
             sv0,
@@ -355,7 +355,7 @@ class heterclinic_mod:
         # eom0_s = eom(0.0, x0_s, self.mu)
 
         sv0 = np.array([*x0_u, *np.eye(6).flatten()])
-        ts, ys, _ = dop853(
+        ts, ys, _, _ = dop853(
             coupled_stm_eom,
             (0.0, tf_u),
             sv0,
@@ -438,7 +438,7 @@ class manifold_reduced_dim:
         tf_s = self.get_tf_s(X)
         tf_u = self.get_tf_u(X)
         sv0 = np.array([*x0_s, *np.eye(6).flatten()])
-        ts, ys, _ = dop853(
+        ts, ys, _, _ = dop853(
             coupled_stm_eom,
             (0.0, tf_s),
             sv0,
@@ -451,7 +451,7 @@ class manifold_reduced_dim:
         eom0_s = eom(0.0, x0_s, self.mu)
 
         sv0 = np.array([*x0_u, *np.eye(6).flatten()])
-        ts, ys, _ = dop853(
+        ts, ys, _, _ = dop853(
             coupled_stm_eom,
             (0.0, tf_u),
             sv0,
@@ -534,7 +534,7 @@ class manifold_higher_dim:
         tf_s = self.get_tf_s(X)
         tf_u = self.get_tf_u(X)
         sv0 = np.array([*x0_s, *np.eye(6).flatten()])
-        ts, ys, _ = dop853(
+        ts, ys, _, _ = dop853(
             coupled_stm_eom,
             (0.0, tf_s),
             sv0,
@@ -547,7 +547,7 @@ class manifold_higher_dim:
         # eom0_s = eom(0.0, x0_s, self.mu)
 
         sv0 = np.array([*x0_u, *np.eye(6).flatten()])
-        ts, ys, _ = dop853(
+        ts, ys, _, _ = dop853(
             coupled_stm_eom,
             (0.0, tf_u),
             sv0,
@@ -596,7 +596,7 @@ class spatial_perpendicular:
         x0 = self.get_x0(X)
         tf = self.get_tf(X)
         xstmIC = np.array([*x0, *np.eye(6).flatten()])
-        ts, ys, _ = dop853(
+        ts, ys, _, _ = dop853(
             coupled_stm_eom,
             (0.0, tf / 2),
             xstmIC,
@@ -610,6 +610,117 @@ class spatial_perpendicular:
 
         dF = self.DF(stm, eomf)
         f = self.f(xf)
+
+        G = np.diag([1, -1, 1, -1, 1, -1])
+        Omega = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 0]])
+        I = np.identity(3)
+        O = np.zeros((3, 3))
+        mtx1 = np.block([[O, -I], [I, -2 * Omega]])
+        mtx2 = np.block([[-2 * Omega, I], [-I, O]])
+        stm_full = G @ mtx1 @ stm.T @ mtx2 @ G @ stm
+        return f, dF, stm_full
+
+
+class fullstate_minus_one:
+    def __init__(
+        self,
+        index_fixed: int,
+        index_no_enforce: int,
+        value_fixed: float,
+        int_tol: float,
+        mu: float = muEM,
+    ):
+        self.int_tol = int_tol
+        self.mu = mu
+        self.ind_fixed = index_fixed
+        self.state_val = value_fixed
+        self.ind_skip = index_no_enforce
+        assert -6 <= self.ind_fixed < 6
+        assert -6 <= self.ind_skip < 6
+
+    def get_X(self, x0: NDArray, tf: float):
+        return np.append(np.delete(x0, self.ind_fixed), tf)
+
+    def get_x0(self, X: NDArray):
+        states = np.array(X[:-1])
+        return np.insert(states, self.ind_fixed, self.state_val)
+
+    def get_tf(self, X: NDArray):
+        return X[-1]
+
+    def DF(self, stm: NDArray, eomf: NDArray):
+        dF = np.hstack((stm - np.eye(6), eomf[:, None]))
+        dF = np.delete(dF, self.ind_fixed, 1)
+        dF = np.delete(dF, self.ind_skip, 0)
+        return dF
+
+    def f(self, x0: NDArray, xf: NDArray):
+        state_diff = xf - x0
+        out = np.delete(state_diff, self.ind_skip)
+        return out
+
+    def f_df_stm(self, X: NDArray):
+        x0 = self.get_x0(X)
+        tf = self.get_tf(X)
+        xstmIC = np.array([*x0, *np.eye(6).flatten()])
+        ts, ys, _, _ = dop853(
+            coupled_stm_eom,
+            (0.0, tf),
+            xstmIC,
+            self.int_tol,
+            self.int_tol,
+            args=(self.mu,),
+        )
+        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
+        xf = np.array(xf)
+        eomf = eom(ts[-1], xf, self.mu)
+
+        dF = self.DF(stm, eomf)
+        f = self.f(x0, xf)
+        return f, dF, stm
+
+
+class xy_symmetric:
+    def __init__(self, int_tol: float, mu: float = muEM):
+        self.int_tol = int_tol
+        self.mu = mu
+
+    def get_X(self, x0: NDArray, tf: float):
+        return np.array([x0[0], x0[1], x0[-3], x0[-2], x0[-1], tf / 2])
+
+    def get_x0(self, X: NDArray):
+        return np.array([X[0], X[1], 0, X[2], X[3], X[4]])
+
+    def get_tf(self, X: NDArray):
+        return X[-1] * 2
+
+    def DF(self, stm: NDArray, eomf: NDArray):
+        dF = np.hstack((stm - np.eye(6), eomf[:, None]))
+        dF = np.delete(dF, 2, 1)
+        dF = np.delete(dF, -1, 0)
+        return dF
+
+    def f(self, x0: NDArray, xf: NDArray):
+        return np.array([*(xf - x0)[:3], *(xf - x0)[[-3, -2]]])
+
+    def f_df_stm(self, X: NDArray):
+        x0 = self.get_x0(X)
+        tf = self.get_tf(X)
+        xstmIC = np.array([*x0, *np.eye(6).flatten()])
+        ts, ys, _, _ = dop853(
+            coupled_stm_eom,
+            (0.0, tf / 2),
+            xstmIC,
+            self.int_tol,
+            self.int_tol,
+            args=(self.mu,),
+        )
+        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
+        xf = np.array(xf)
+        eomf = eom(ts[-1], xf, self.mu)
+
+        dF = self.DF(stm, eomf)
+        f = self.f(x0, xf)
 
         G = np.diag([1, -1, 1, -1, 1, -1])
         Omega = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 0]])
@@ -650,7 +761,7 @@ class spatial_period_fixed:
         x0 = self.get_x0(X)
         tf = self.period
         xstmIC = np.array([*x0, *np.eye(6).flatten()])
-        ts, ys, _ = dop853(
+        ts, ys, _, _ = dop853(
             coupled_stm_eom,
             (0.0, tf / 2),
             xstmIC,
@@ -705,7 +816,7 @@ class period_fixed_spatial_perpendicular:
             period = self.period
         x0 = self.get_x0(X)
         xstmIC = np.array([*x0, *np.eye(6).flatten()])
-        ts, ys, _ = dop853(
+        ts, ys, _, _ = dop853(
             coupled_stm_eom,
             (0.0, period / 2),
             xstmIC,
@@ -759,7 +870,7 @@ class planar_perpendicular:
         x0 = self.get_x0(X)
         tf = self.get_tf(X)
         xstmIC = np.array([*x0, *np.eye(6).flatten()])
-        ts, ys, _ = dop853(
+        ts, ys, _, _ = dop853(
             coupled_stm_eom,
             (0.0, tf / 2),
             xstmIC,

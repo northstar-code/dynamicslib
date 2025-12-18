@@ -271,7 +271,7 @@ def find_bif(
                 skip -= 1
 
         if debug:
-            print(func_vals[-1], func_vals[-2], s, X)
+            print(func_vals[-1], func_vals[-2], s)#, X)
 
 
 # def find_per_mult(

@@ -384,7 +384,7 @@ def f_df_CR3_single(
 ) -> Tuple[NDArray, NDArray, NDArray]:
     x0, tf = X2xtf(X)
     xstmIC = np.array([*x0, *np.eye(6).flatten()])
-    ts, ys, _ = dop853(
+    ts, ys, _, _ = dop853(
         coupled_stm_eom,
         (0.0, tf if full_period else tf / 2),
         xstmIC,

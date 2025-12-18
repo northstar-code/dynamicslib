@@ -140,7 +140,7 @@ def dop_interp_step(
     return xs
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def dop_interpolate(
     ts: NDArray,
     xs: NDArray,
