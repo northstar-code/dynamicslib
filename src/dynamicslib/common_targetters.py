@@ -722,13 +722,8 @@ class xy_symmetric:
         dF = self.DF(stm, eomf)
         f = self.f(x0, xf)
 
-        G = np.diag([1, -1, 1, -1, 1, -1])
-        Omega = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 0]])
-        I = np.identity(3)
-        O = np.zeros((3, 3))
-        mtx1 = np.block([[O, -I], [I, -2 * Omega]])
-        mtx2 = np.block([[-2 * Omega, I], [-I, O]])
-        stm_full = G @ mtx1 @ stm.T @ mtx2 @ G @ stm
+        R = np.diag([1, 1, -1, 1, 1, -1])
+        stm_full = R @ stm @R @ stm
         return f, dF, stm_full
 
 
