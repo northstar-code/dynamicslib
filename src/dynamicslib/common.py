@@ -152,55 +152,6 @@ def JCgrad(state: NDArray, mu: float = muEM) -> NDArray[np.floating]:
     return -2 * mu / d2**3 * r2 - 2 * (1 - mu) / d1**3 * r1 + 2 * x
 
 
-# DEPRICATED: not really useful
-# def get_stab(eigval: float, eps: float = 1e-5) -> int:
-#     """Get stability modes of a single eigenvalue. Numeric codes are
-#     ```
-#     0: parabolic
-#     1: elliptic
-#     2: +hyperbolic
-#     3: -hyperbolic
-#     4: quadrouple
-#     ```
-
-#     Args:
-#         eigval (float): eigenvalue
-#         eps (float, optional): epsilon for ==1. Defaults to 1e-5.
-
-#     Returns:
-#         int: the stability type.
-#     """
-#     if 1 - eps <= np.abs(eigval) <= eps:
-#         if np.abs(np.imag(eigval)) < eps:
-#             return 0
-#         else:
-#             return 1
-#     elif np.abs(np.imag(eigval)) < eps:
-#         if np.real(eigval) > 0:
-#             return 2
-#         else:
-#             return 3
-#     else:
-#         return 4
-
-
-# shortcut to get x,y,z from X
-# def prop_ic(
-#     X: NDArray,
-#     X2xtf_func: Callable,
-#     mu: float = muEM,
-#     int_tol=1e-12,
-#     density_mult: int = 2,
-# ):
-#     x0, tf = X2xtf_func(X)
-#     ts, xs, fs, Fs = dop853(
-#         eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,), dense_output=True
-#     )
-#     ts, xs = dop_interpolate(ts, xs.T, Fs, n_mult=density_mult)
-#     x, y, z = xs[:3]
-#     return x, y, z
-
-
 def prop_ic_fullstate(
     X: NDArray,
     X2xtf_func: Callable,
