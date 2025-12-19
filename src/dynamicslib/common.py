@@ -372,8 +372,8 @@ def get_JC_tf(X: NDArray, X2xtf_func: Callable, mu: float = muEM):
     return jc, tf
 
 
-# basic call
-def f_df_CR3_single(
+# TO BE PHASED OUT
+def f_df_CR3_single_DEPRICATED(
     X: NDArray,
     X2xtf: Callable,
     dF_func: Callable,

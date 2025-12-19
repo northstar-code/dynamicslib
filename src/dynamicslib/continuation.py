@@ -11,6 +11,7 @@ def arclen_cont(
     S: float = 0.5,
     tol: float = 1e-10,
     max_iter: None | int = None,
+    max_step: None | float = None,
     fudge: float | None = None,
     exact_tangent: bool = False,
     modified=True,
@@ -75,6 +76,7 @@ def arclen_cont(
                 tol,
                 modified=modified,
                 max_iter=max_iter,
+                max_step=max_step,
                 fudge=fudge,
             )
         except np.linalg.LinAlgError as err:
@@ -271,7 +273,7 @@ def find_bif(
                 skip -= 1
 
         if debug:
-            print(func_vals[-1], func_vals[-2], s)#, X)
+            print(func_vals[-1], func_vals[-2], s)  # , X)
 
 
 # def find_per_mult(
