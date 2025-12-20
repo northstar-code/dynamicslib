@@ -271,6 +271,10 @@ def find_bif(
                     s /= -scale
             else:
                 skip -= 1
+        if abs(func_vals[-1]) < bisect_tol:
+            tangent = svd.Vh[-2]
+            print(f"BIFURCATING @ X={X} in the direction of {tangent}")
+            return X, tangent
 
         if debug:
             print(func_vals[-1], func_vals[-2], s)  # , X)

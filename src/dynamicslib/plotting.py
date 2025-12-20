@@ -9,6 +9,7 @@ import pandas as pd
 from IPython.display import display, HTML
 import plotly
 from numba import njit
+from scipy.signal import find_peaks
 from base64 import b64encode
 from dash import Dash, dcc, html, Input, Output, callback
 
@@ -815,11 +816,145 @@ def broucke_diagram(df: pd.DataFrame, html_save: str | None = None, show: bool =
         fig.write_html(html_save, include_plotlyjs="cdn")
 
 
-def broucke_lines(df: pd.DataFrame, html_save: str | None = None, show: bool = True):
+# def broucke_lines(df: pd.DataFrame, html_save: str | None = None, show: bool = True):
+#     n = len(df)
+#     jacobis = df["Jacobi Constant"]
+#     periods = df["Period"]
+#     jc_deriv = np.gradient(jacobis)
+#
+#     eig_df = df[[col for col in df.columns if "Eig" in col]]
+#     eigs = eig_df.values.astype(np.complex128)
+#     alpha = 2 - np.sum(eigs, axis=1).real
+#     beta = (alpha**2 - (np.sum(eigs**2, axis=1).real - 2)) / 2
+
+#     def get_per_mult(x, n, q=1):
+#         a = -2 * np.cos(2 * np.pi * q / n)
+#         b = 2 - 4 * (np.cos(2 * np.pi * q / n)) ** 2
+#         return a * x + b
+
+#     lines_cross = np.array(
+#         [
+#             get_per_mult(alpha, 2),
+#             get_per_mult(alpha, 3),
+#             get_per_mult(alpha, 4),
+#             get_per_mult(alpha, 5, 1),
+#             get_per_mult(alpha, 5, 2),
+#             get_per_mult(alpha, 6),
+#             get_per_mult(alpha, 7, 1),
+#             get_per_mult(alpha, 7, 2),
+#             get_per_mult(alpha, 7, 3),
+#             get_per_mult(alpha, 8, 1),
+#             get_per_mult(alpha, 8, 3),
+#             get_per_mult(alpha, 9, 1),
+#             get_per_mult(alpha, 9, 2),
+#             get_per_mult(alpha, 9, 4),
+#             -2 * alpha - 2,
+#             alpha**2 / 4 + 2,
+#         ]
+#     )
+#     lines_names = [
+#         "Period-Double",
+#         "Period-Triple",
+#         "Period-Quadrouple",
+#         "Period-Quintuple (1)",
+#         "Period-Quintuple (2)",
+#         "Period-Sextuple",
+#         "Period-Septuple (1)",
+#         "Period-Septuple (2)",
+#         "Period-Septuple (3)",
+#         "Period-Octuple (1)",
+#         "Period-Octuple (3)",
+#         "Period-Nonuple (1)",
+#         "Period-Nonuple (2)",
+#         "Period-Nonuple (4)",
+#         "Tangent",
+#         "Hopf",
+#     ]
+
+#     xs = list(range(n))
+#     nlines = len(lines_names)
+
+#     jc_colors = ["rgb(100, 0, 0)" if jcd < 0 else "rgb(0, 100, 0)" for jcd in jc_deriv]
+#     zero = go.Scatter(
+#         x=xs,
+#         y=np.zeros_like(xs),
+#         text=[
+#             f"Index: {ind}<br>JC: {jc:.6f}<br>Period: {period:.6f}"
+#             for ind, jc, period in zip(df.index, jacobis, periods)
+#         ],
+#         hoverinfo="text",
+#         mode="lines+markers",
+#         hoverlabel=dict(namelength=-1, bgcolor="black", font_color="white"),
+#         marker=dict(size=3, color=jc_colors),
+#         line=dict(width=0.75, color="white"),
+#         showlegend=False,
+#         visible=True,
+#     )
+#     curves = [zero]
+#     for lineno in range(nlines):
+#         name = lines_names[lineno]
+#         curve = go.Scatter(
+#             x=xs,
+#             y=(lines_cross[lineno] - beta),
+#             name=name,
+#             text=[f"{name}<br>Index: {ind}" for ind in df.index],
+#             hoverinfo="text",
+#             mode="lines+markers",
+#             hoverlabel=dict(namelength=-1, bgcolor="black", font_color="white"),
+#             marker=dict(size=5),
+#             line=dict(width=1),
+#             visible=(True if name in ["Hopf", "Tangent"] else "legendonly"),
+#         )
+#         curves.append(curve)
+
+#     fig = go.Figure(data=curves)
+
+#     fig.update_layout(
+#         width=1100,
+#         height=600,
+#         template="plotly_dark",
+#         showlegend=True,
+#         margin=dict(l=0, r=0, b=0, t=0),
+#         plot_bgcolor="#000000",
+#         paper_bgcolor="#000000",
+#         xaxis=dict(title=r"Index"),
+#         yaxis=dict(title=r"Root Finder"),
+#     )
+#     fig.update_yaxes(exponentformat="power")
+#     if show:
+#         fig.show()
+
+#     if html_save is not None:
+#         fig.write_html(html_save, include_plotlyjs="cdn")
+
+
+def broucke_lines(
+    df: pd.DataFrame,
+    html_save: str | None = None,
+    show: bool = True,
+    line_color_by: str | None = None,
+):
+    # assert line_color_by in [None, "Period", "Jacobi Constant"]
     n = len(df)
-    colormap = "rainbow"
+    jacobis = df["Jacobi Constant"].values
+    periods = df["Period"].values
+    jc_deriv = np.gradient(jacobis)
+    per_deriv = np.gradient(periods)
+
+    # DETECT EXTREMA
+    dif_period_p = periods[2:] - periods[1:-1]
+    dif_period_m = periods[1:-1] - periods[:-2]
+    per_sign_change = np.sign(dif_period_p) != np.sign(dif_period_m)
+    per_ineq = (periods[2:] != periods[1:-1]) * (periods[1:-1] != periods[:-2])
+    period_indices = np.where(per_sign_change * per_ineq)[0] + 1
+
+    dif_jacobi_p = jacobis[2:] - jacobis[1:-1]
+    dif_jacobi_m = jacobis[1:-1] - jacobis[:-2]
+    jcb_sign_change = np.sign(dif_jacobi_p) != np.sign(dif_jacobi_m)
+    jcb_ineq = (jacobis[2:] != jacobis[1:-1]) * (jacobis[1:-1] != jacobis[:-2])
+    jacobi_indices = np.where(jcb_sign_change * jcb_ineq)[0] + 1
+
     eig_df = df[[col for col in df.columns if "Eig" in col]]
-    jcs = df["Jacobi Constant"]
     eigs = eig_df.values.astype(np.complex128)
     alpha = 2 - np.sum(eigs, axis=1).real
     beta = (alpha**2 - (np.sum(eigs**2, axis=1).real - 2)) / 2
@@ -868,20 +1003,43 @@ def broucke_lines(df: pd.DataFrame, html_save: str | None = None, show: bool = T
         "Hopf",
     ]
 
-    xs = list(range(n))
-    nlines = len(lines_names)
-    c = px.colors.sample_colorscale(colormap, nlines)
+    red = "rgb(100, 0, 0)"
+    grn = "rgb(0, 100, 0)"
+    per_colors = [red if prd < 0 else grn for prd in per_deriv]
+    jc_colors = [red if jcd < 0 else grn for jcd in jc_deriv]
 
-    curves = []
-    for lineno in range(nlines):
-        name = lines_names[lineno]
-        # col = c[lineno]
+    if line_color_by == "Jacobi Constant":
+        line_col = jc_colors
+        print("????")
+    elif line_color_by == "Period":
+        line_col = per_colors
+    else:
+        line_col = None
+
+    xs = list(range(n))
+    zero = go.Scatter(
+        x=xs,
+        y=np.zeros_like(xs),
+        text=[
+            f"Index: {ind}<br>JC: {jc:.6f}<br>Period: {period:.6f}"
+            for ind, jc, period in zip(df.index, jacobis, periods)
+        ],
+        hoverinfo="text",
+        mode="lines+markers" if line_col else "lines",
+        hoverlabel=dict(namelength=-1, bgcolor="black", font_color="white"),
+        line=dict(width=0.75, color="white"),
+        marker=dict(size=3, color=line_col) if line_col else None,
+        showlegend=False,
+        visible=True,
+    )
+    curves = [zero]
+    for name, line in zip(lines_names, lines_cross):
         curve = go.Scatter(
             x=xs,
-            y=(lines_cross[lineno] - beta),
+            y=(line - beta),
             name=name,
-            text=[f"Index: {ind}<br>JC: {jc:.6f}" for ind, jc in zip(df.index, jcs)],
-            hoverinfo="name+text",
+            text=[f"{name}<br>Index: {ind}" for ind in df.index],
+            hoverinfo="text",
             mode="lines+markers",
             hoverlabel=dict(namelength=-1, bgcolor="black", font_color="white"),
             marker=dict(size=5),
@@ -889,19 +1047,32 @@ def broucke_lines(df: pd.DataFrame, html_save: str | None = None, show: bool = T
             visible=(True if name in ["Hopf", "Tangent"] else "legendonly"),
         )
         curves.append(curve)
-
     fig = go.Figure(data=curves)
 
+    fig.add_trace(
+        go.Scatter(
+            x=[None],
+            y=[None],
+            mode="lines",
+            line=dict(color="red", dash="dot"),
+            name="Fold Candidate",
+            showlegend=True,
+            opacity=0.5
+        )
+    )
+    for ind in set(list(period_indices) + list(jacobi_indices)):
+        fig.add_vline(
+            x=ind, line=dict(dash="dot", color="red"), layer="below", opacity=0.3
+        )
     fig.update_layout(
         width=1100,
         height=600,
         template="plotly_dark",
         showlegend=True,
-        margin=dict(l=10, r=30, b=10, t=50),
+        margin=dict(l=0, r=0, b=0, t=0),
         plot_bgcolor="#000000",
         paper_bgcolor="#000000",
-        xaxis=dict(title=r"Index"),
-        yaxis=dict(title=r"Root Finder"),
+        xaxis=dict(title=r"Index", showgrid=False, zeroline=False),
     )
     fig.update_yaxes(exponentformat="power")
     if show:

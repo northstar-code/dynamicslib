@@ -1,8 +1,9 @@
 import numpy as np
 from dynamicslib.common import muEM, jacobi_constant, coupled_stm_eom, eom, JCgrad
 from dynamicslib.integrate import dop853, rk8_step
-from abc import ABC, abstractmethod
+from dynamicslib.interpolate import dop_interpolate
 from numpy.typing import NDArray
+from typing import Tuple
 
 
 # class Targetter(ABC):
@@ -660,6 +661,155 @@ class fullstate_minus_one:
         return out
 
     def f_df_stm(self, X: NDArray):
+        x0 = self.get_x0(X)
+        tf = self.get_tf(X)
+        xstmIC = np.array([*x0, *np.eye(6).flatten()])
+        ts, ys, _, _ = dop853(
+            coupled_stm_eom,
+            (0.0, tf),
+            xstmIC,
+            self.int_tol,
+            self.int_tol,
+            args=(self.mu,),
+        )
+        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
+        xf = np.array(xf)
+        eomf = eom(ts[-1], xf, self.mu)
+
+        dF = self.DF(stm, eomf)
+        f = self.f(x0, xf)
+        return f, dF, stm
+
+
+class multi_shooter:
+    # problem: currently super under constrained (6N-1 x 7N-1)
+    def __init__(
+        self,
+        index_fixed: int,
+        index_no_enforce: int,
+        value_fixed: float,
+        N_segments: int = 2,
+        int_tol: float = 1e-11,
+        mu: float = muEM,
+    ):
+        self.int_tol = int_tol
+        self.mu = mu
+        self.ind_fixed = index_fixed
+        self.state_val = value_fixed
+        self.ind_skip = index_no_enforce
+        self.nseg = N_segments
+        assert -6 <= self.ind_fixed < 6
+        assert -6 <= self.ind_skip < 6
+        assert self.nseg > 1
+
+    def get_X(self, x0: NDArray, tf: float):
+        # Propagate with arbitrary timesteps
+        ts, xs, _, Fs = dop853(
+            eom,
+            (0.0, tf),
+            x0,
+            self.int_tol,
+            self.int_tol,
+            args=(self.mu,),
+            dense_output=True,
+        )
+        # ensure that num timesteps is divisible by num segments
+        xe, te = dop_interpolate(ts, xs.T, Fs, n_mult=self.nseg)
+        max_ind = len(ts) - 1  # maximum index to new list
+        Xsi = []
+        for jj in range(self.nseg):
+            # get indices to access
+            i0 = jj * max_ind / self.nseg
+            i1 = (jj + 1) * max_ind / self.nseg
+            assert np.all([i0 == int(i0), i1 == int(i1)])
+            i0, i1 = int(i0), int(i1)
+
+            x0i = xe[:, i0]
+            if jj == 0:
+                x0i = np.delete(x0i, self.ind_fixed)
+            dti = te[i1] - te[i0]
+            Xsi.append(np.append(x0i, dti))
+        return np.concat(Xsi)
+
+    def get_x0_segment(self, X: NDArray, segment: int):
+        # NOTE: segment is 0-indexed
+        i0 = 7 * (segment)  # Index of control variable to start
+        i1 = 7 * (segment + 1) - 1  # idx of control variable to end (X0 is one smaller)
+        Xsegment = X[i0:i1].copy()
+        states = Xsegment[:-1]  # cut off time
+        if segment == 0:
+            states = np.insert(states, self.ind_fixed, self.state_val)
+        return states
+
+    def get_x0s(self, X: NDArray):
+        x0s = []
+        for segment in range(self.nseg):
+            x0s.append(self.get_x0_segment(X, segment))
+        return x0s
+
+    def get_dt_segment(self, X: NDArray, segment: int):
+        # NOTE: segment is 0-indexed
+        i0 = 7 * (segment)  # Index of control variable to start
+        i1 = 7 * (segment + 1) - 1  # idx of control variable to end (X0 is one smaller)
+        Xsegment = X[i0:i1].copy()
+        return Xsegment[-1]
+
+    def get_x0(self, X):
+        return self.get_x0_segment(X, 0)
+
+    def get_tf(self, X: NDArray):
+        dts = []
+        for segment in range(self.nseg):
+            dts.append(self.get_dt_segment(X, segment))
+        return sum(dts)
+
+    def DF(
+        self,
+        stm_segments: Tuple[NDArray],
+        eom0_segments: Tuple[NDArray],
+        eomf_segments: Tuple[NDArray],
+    ):
+        # WIP/TODO
+        dF = np.zeros((7 * self.nseg, 7 * self.nseg), np.float64)
+        for jj in range(self.nseg):
+            ind0_xf = 7 * (jj)
+            ind0_x0 = 7 * ((jj + 1) % self.nseg)
+            ind1_xf = 7 * (jj) + 7
+            ind1_x0 = 7 * ((jj + 1) % self.nseg) + 7
+            if jj == self.nseg:
+                state_diff = np.delete(state_diff, self.ind_skip)
+            f_segments.append(state_diff)
+        # for jo in range(self.nseg):
+        #     # row index
+        #     ind0o = 7 * jo
+        #     ind1o = 7 * (jo + 1)
+        #     for ji in range(self.nseg):
+        #         # row index
+        #         ind0i = 7 * ji
+        #         ind1i = 7 * (ji + 1)
+        #         dF[ind0i:ind1i, ind0o:ind1o] = np.hstack(
+        #             (stm - np.eye(6), eomf[:, None])
+        #         )
+
+        dF = np.delete(dF, self.ind_fixed, 1)
+        dF = np.delete(dF, self.ind_skip + 7 * (self.nseg - 1), 0)
+        return dF
+
+    def f(self, x0_segments: Tuple[NDArray], xf_segments: Tuple[NDArray]):
+        assert len(xf_segments) == len(x0_segments) == self.nseg
+        # f[j] = xf[j] - x0[j+1] except where j+1 is num segments
+        f_segments = []
+        for jj in range(self.nseg):
+            ind_xf = jj
+            ind_x0 = (jj + 1) % self.nseg
+            state_diff = xf_segments[ind_xf] - x0_segments[ind_x0]
+            if jj == self.nseg:
+                state_diff = np.delete(state_diff, self.ind_skip)
+            f_segments.append(state_diff)
+        return np.concat(f_segments)
+
+    def f_df_stm(self, X: NDArray):
+        # WIP/TODO
         x0 = self.get_x0(X)
         tf = self.get_tf(X)
         xstmIC = np.array([*x0, *np.eye(6).flatten()])
