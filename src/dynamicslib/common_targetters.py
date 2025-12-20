@@ -680,6 +680,54 @@ class fullstate_minus_one:
         return f, dF, stm
 
 
+class axial:
+    def __init__(
+        self,
+        int_tol: float,
+        mu: float = muEM,
+    ):
+        self.int_tol = int_tol
+        self.mu = mu
+
+    def get_X(self, x0: NDArray, tf: float):
+        return np.array([x0[0], x0[-2], x0[-1], tf])
+
+    def get_x0(self, X: NDArray):
+        return np.array([X[0], 0, 0, 0, X[1], X[2]])
+
+    def get_tf(self, X: NDArray):
+        return X[-1]
+
+    def DF(self, stm: NDArray, eomf: NDArray):
+        dF = np.hstack((stm, eomf[:, None]))
+        dF = np.delete(dF, [1, 2, 3], 1)
+        dF = np.delete(dF, [0, 4, 5], 0)
+        return dF
+
+    def f(self, x0: NDArray, xf: NDArray):
+        return np.array([xf[1], xf[2], xf[3]])
+
+    def f_df_stm(self, X: NDArray):
+        x0 = self.get_x0(X)
+        tf = self.get_tf(X)
+        xstmIC = np.array([*x0, *np.eye(6).flatten()])
+        ts, ys, _, _ = dop853(
+            coupled_stm_eom,
+            (0.0, tf),
+            xstmIC,
+            self.int_tol,
+            self.int_tol,
+            args=(self.mu,),
+        )
+        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
+        xf = np.array(xf)
+        eomf = eom(ts[-1], xf, self.mu)
+
+        dF = self.DF(stm, eomf)
+        f = self.f(x0, xf)
+        return f, dF, stm
+
+
 class xy_symmetric:
     def __init__(self, int_tol: float, mu: float = muEM):
         self.int_tol = int_tol
@@ -723,7 +771,7 @@ class xy_symmetric:
         f = self.f(x0, xf)
 
         R = np.diag([1, 1, -1, 1, 1, -1])
-        stm_full = R @ stm @R @ stm
+        stm_full = R @ stm @ R @ stm
         return f, dF, stm_full
 
 

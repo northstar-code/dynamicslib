@@ -14,7 +14,7 @@ def arclen_cont(
     max_step: None | float = None,
     fudge: float | None = None,
     exact_tangent: bool = False,
-    modified=True,
+    modified:bool=True,
     stop_callback: Callable | None = None,  # possibly change to also take dF?
     stop_kwags: dict = {},
 ) -> Tuple[List, List]:

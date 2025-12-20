@@ -291,6 +291,7 @@ def plotly_display(
     flip_horiz: bool = False,
     arrow_inds: List = [],
     n_arrow: int = 2,
+    color_by: str = "Index",
 ):
     """Displays a family using a Plotly figure
 
@@ -358,7 +359,7 @@ def plotly_display(
     xyzs = [np.float32(xyz) for xyz in xyzs]
     n = len(xyzs)  # number of trajectories
 
-    cdata = datatr[param_names.index("Index")]  # color data
+    cdata = datatr[param_names.index(color_by)]  # color data
 
     # get bounding box
     xs, ys, zs = np.hstack(xyzs)[:3]
@@ -806,6 +807,102 @@ def broucke_diagram(df: pd.DataFrame, html_save: str | None = None, show: bool =
         yaxis=dict(title=r"$\beta$"),
     )
     fig.update_xaxes(exponentformat="power")
+    fig.update_yaxes(exponentformat="power")
+    if show:
+        fig.show()
+
+    if html_save is not None:
+        fig.write_html(html_save, include_plotlyjs="cdn")
+
+
+def broucke_lines(df: pd.DataFrame, html_save: str | None = None, show: bool = True):
+    n = len(df)
+    colormap = "rainbow"
+    eig_df = df[[col for col in df.columns if "Eig" in col]]
+    jcs = df["Jacobi Constant"]
+    eigs = eig_df.values.astype(np.complex128)
+    alpha = 2 - np.sum(eigs, axis=1).real
+    beta = (alpha**2 - (np.sum(eigs**2, axis=1).real - 2)) / 2
+
+    def get_per_mult(x, n, q=1):
+        a = -2 * np.cos(2 * np.pi * q / n)
+        b = 2 - 4 * (np.cos(2 * np.pi * q / n)) ** 2
+        return a * x + b
+
+    lines_cross = np.array(
+        [
+            get_per_mult(alpha, 2),
+            get_per_mult(alpha, 3),
+            get_per_mult(alpha, 4),
+            get_per_mult(alpha, 5, 1),
+            get_per_mult(alpha, 5, 2),
+            get_per_mult(alpha, 6),
+            get_per_mult(alpha, 7, 1),
+            get_per_mult(alpha, 7, 2),
+            get_per_mult(alpha, 7, 3),
+            get_per_mult(alpha, 8, 1),
+            get_per_mult(alpha, 8, 3),
+            get_per_mult(alpha, 9, 1),
+            get_per_mult(alpha, 9, 2),
+            get_per_mult(alpha, 9, 4),
+            -2 * alpha - 2,
+            alpha**2 / 4 + 2,
+        ]
+    )
+    lines_names = [
+        "Period-Double",
+        "Period-Triple",
+        "Period-Quadrouple",
+        "Period-Quintuple (1)",
+        "Period-Quintuple (2)",
+        "Period-Sextuple",
+        "Period-Septuple (1)",
+        "Period-Septuple (2)",
+        "Period-Septuple (3)",
+        "Period-Octuple (1)",
+        "Period-Octuple (3)",
+        "Period-Nonuple (1)",
+        "Period-Nonuple (2)",
+        "Period-Nonuple (4)",
+        "Tangent",
+        "Hopf",
+    ]
+
+    xs = list(range(n))
+    nlines = len(lines_names)
+    c = px.colors.sample_colorscale(colormap, nlines)
+
+    curves = []
+    for lineno in range(nlines):
+        name = lines_names[lineno]
+        # col = c[lineno]
+        curve = go.Scatter(
+            x=xs,
+            y=(lines_cross[lineno] - beta),
+            name=name,
+            text=[f"Index: {ind}<br>JC: {jc:.6f}" for ind, jc in zip(df.index, jcs)],
+            hoverinfo="name+text",
+            mode="lines+markers",
+            hoverlabel=dict(namelength=-1, bgcolor="black", font_color="white"),
+            marker=dict(size=5),
+            line=dict(width=1),
+            visible=(True if name in ["Hopf", "Tangent"] else "legendonly"),
+        )
+        curves.append(curve)
+
+    fig = go.Figure(data=curves)
+
+    fig.update_layout(
+        width=1100,
+        height=600,
+        template="plotly_dark",
+        showlegend=True,
+        margin=dict(l=10, r=30, b=10, t=50),
+        plot_bgcolor="#000000",
+        paper_bgcolor="#000000",
+        xaxis=dict(title=r"Index"),
+        yaxis=dict(title=r"Root Finder"),
+    )
     fig.update_yaxes(exponentformat="power")
     if show:
         fig.show()
