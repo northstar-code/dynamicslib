@@ -524,7 +524,8 @@ def plotly_display(
                     sizemode="raw",
                     sizeref=rng / 20,
                     hoverinfo="none",
-                    colorscale=[darken_color(colors[i_arrow], 0.5)] * 2,
+                    colorscale = ["rgb(60, 15, 0)","rgb(80, 20, 0)"],
+                    # colorscale=[darken_color(colors[i_arrow], 0.5)] * 2,
                     showscale=False,
                 )
             else:
@@ -985,20 +986,20 @@ def broucke_lines(
         ]
     )
     lines_names = [
-        "Period-Double",
-        "Period-Triple",
-        "Period-Quadrouple",
-        "Period-Quintuple (1)",
-        "Period-Quintuple (2)",
-        "Period-Sextuple",
-        "Period-Septuple (1)",
-        "Period-Septuple (2)",
-        "Period-Septuple (3)",
-        "Period-Octuple (1)",
-        "Period-Octuple (3)",
-        "Period-Nonuple (1)",
-        "Period-Nonuple (2)",
-        "Period-Nonuple (4)",
+        "Double",
+        "Triple",
+        "Quadrouple",
+        "Quintuple (1)",
+        "Quintuple (2)",
+        "Sextuple",
+        "Septuple (1)",
+        "Septuple (2)",
+        "Septuple (3)",
+        "Octuple (1)",
+        "Octuple (3)",
+        "Nonuple (1)",
+        "Nonuple (2)",
+        "Nonuple (4)",
         "Tangent",
         "Hopf",
     ]
@@ -1010,7 +1011,6 @@ def broucke_lines(
 
     if line_color_by == "Jacobi Constant":
         line_col = jc_colors
-        print("????")
     elif line_color_by == "Period":
         line_col = per_colors
     else:
@@ -1038,8 +1038,11 @@ def broucke_lines(
             x=xs,
             y=(line - beta),
             name=name,
-            text=[f"{name}<br>Index: {ind}" for ind in df.index],
-            hoverinfo="text",
+            # text=[
+            #     f"{name}<br>Index: {ind}<br>JC: {jc:.6f}<br>Period: {per:.6f}"
+            #     for ind, jc, per in zip(df.index, jacobis, periods)
+            # ],
+            hoverinfo="name",
             mode="lines+markers",
             hoverlabel=dict(namelength=-1, bgcolor="black", font_color="white"),
             marker=dict(size=5),
@@ -1057,7 +1060,7 @@ def broucke_lines(
             line=dict(color="red", dash="dot"),
             name="Fold Candidate",
             showlegend=True,
-            opacity=0.5
+            opacity=0.5,
         )
     )
     for ind in set(list(period_indices) + list(jacobi_indices)):
@@ -1065,18 +1068,22 @@ def broucke_lines(
             x=ind, line=dict(dash="dot", color="red"), layer="below", opacity=0.3
         )
     fig.update_layout(
-        width=1100,
-        height=600,
         template="plotly_dark",
         showlegend=True,
         margin=dict(l=0, r=0, b=0, t=0),
         plot_bgcolor="#000000",
         paper_bgcolor="#000000",
         xaxis=dict(title=r"Index", showgrid=False, zeroline=False),
+        hovermode="x",
+        modebar_remove=["autoScale", "lasso2d", "select2d", "toImage"],
+        legend=dict(y=0, yanchor="bottom"),
     )
     fig.update_yaxes(exponentformat="power")
+
+    fig.update_layout(xaxis=dict(modebardisable="zoominout+autoscale"))
     if show:
-        fig.show()
+        config = dict(displaylogo=False, displayModeBar=True)
+        fig.show(config=config)
 
     if html_save is not None:
         fig.write_html(html_save, include_plotlyjs="cdn")

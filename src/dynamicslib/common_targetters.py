@@ -636,8 +636,8 @@ class fullstate_minus_one:
         self.ind_fixed = index_fixed
         self.state_val = value_fixed
         self.ind_skip = index_no_enforce
-        assert -6 <= self.ind_fixed < 6
-        assert -6 <= self.ind_skip < 6
+        assert 0 <= self.ind_fixed < 6
+        assert 0 <= self.ind_skip < 6
 
     def get_X(self, x0: NDArray, tf: float):
         return np.append(np.delete(x0, self.ind_fixed), tf)
@@ -682,7 +682,7 @@ class fullstate_minus_one:
 
 
 class multi_shooter:
-    # problem: currently super under constrained (6N-1 x 7N-1)
+    # problem: currently super under constrained (6N-1 x 7N-1). I could make it work by forcing segments to be equal duration?
     def __init__(
         self,
         index_fixed: int,
@@ -698,8 +698,8 @@ class multi_shooter:
         self.state_val = value_fixed
         self.ind_skip = index_no_enforce
         self.nseg = N_segments
-        assert -6 <= self.ind_fixed < 6
-        assert -6 <= self.ind_skip < 6
+        assert 0 <= self.ind_fixed < 6
+        assert 0 <= self.ind_skip < 6
         assert self.nseg > 1
 
     def get_X(self, x0: NDArray, tf: float):
@@ -757,43 +757,14 @@ class multi_shooter:
     def get_x0(self, X):
         return self.get_x0_segment(X, 0)
 
-    def get_tf(self, X: NDArray):
+    def get_dts(self, X: NDArray):
         dts = []
         for segment in range(self.nseg):
             dts.append(self.get_dt_segment(X, segment))
-        return sum(dts)
+        return dts
 
-    def DF(
-        self,
-        stm_segments: Tuple[NDArray],
-        eom0_segments: Tuple[NDArray],
-        eomf_segments: Tuple[NDArray],
-    ):
-        # WIP/TODO
-        dF = np.zeros((7 * self.nseg, 7 * self.nseg), np.float64)
-        for jj in range(self.nseg):
-            ind0_xf = 7 * (jj)
-            ind0_x0 = 7 * ((jj + 1) % self.nseg)
-            ind1_xf = 7 * (jj) + 7
-            ind1_x0 = 7 * ((jj + 1) % self.nseg) + 7
-            if jj == self.nseg:
-                state_diff = np.delete(state_diff, self.ind_skip)
-            f_segments.append(state_diff)
-        # for jo in range(self.nseg):
-        #     # row index
-        #     ind0o = 7 * jo
-        #     ind1o = 7 * (jo + 1)
-        #     for ji in range(self.nseg):
-        #         # row index
-        #         ind0i = 7 * ji
-        #         ind1i = 7 * (ji + 1)
-        #         dF[ind0i:ind1i, ind0o:ind1o] = np.hstack(
-        #             (stm - np.eye(6), eomf[:, None])
-        #         )
-
-        dF = np.delete(dF, self.ind_fixed, 1)
-        dF = np.delete(dF, self.ind_skip + 7 * (self.nseg - 1), 0)
-        return dF
+    def get_tf(self, X: NDArray):
+        return sum(self.get_dts(X))
 
     def f(self, x0_segments: Tuple[NDArray], xf_segments: Tuple[NDArray]):
         assert len(xf_segments) == len(x0_segments) == self.nseg
@@ -808,24 +779,50 @@ class multi_shooter:
             f_segments.append(state_diff)
         return np.concat(f_segments)
 
+    def DF(
+        self,
+        stm_segments: Tuple[NDArray] | List[NDArray],
+        # eom0_segments: Tuple[NDArray],
+        eomf_segments: Tuple[NDArray] | List[NDArray],
+    ):
+        # WIP/TODO
+        dF = np.zeros((6 * self.nseg, 7 * self.nseg), np.float64)
+        for jj in range(self.nseg):
+            ind0_xf = 7 * (jj)
+            ind0_x0 = 7 * ((jj + 1) % self.nseg)
+            ind1_xf = 7 * (jj) + 7
+            ind1_x0 = 7 * ((jj + 1) % self.nseg) + 7
+            stm_part = np.hstack(stm_segments[jj], eomf_segments[jj][:, None])
+            dF[ind0_xf:ind1_xf, ind0_x0:ind1_x0] = stm_part
+            dF[ind0_xf:ind1_xf, (ind0_x0 + 7) : (ind1_x0 + 7)] = -np.eye(6)
+
+        dF = np.delete(dF, self.ind_fixed, 1)
+        dF = np.delete(dF, self.ind_skip + 6 * (self.nseg - 1), 0)
+        return dF
+
     def f_df_stm(self, X: NDArray):
         # WIP/TODO
-        x0 = self.get_x0(X)
-        tf = self.get_tf(X)
-        xstmIC = np.array([*x0, *np.eye(6).flatten()])
-        ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, tf),
-            xstmIC,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
-        )
-        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
-        xf = np.array(xf)
-        eomf = eom(ts[-1], xf, self.mu)
+        x0s = self.get_x0s(X)
+        tfs = self.get_dts(X)
+        stms = []
+        eomfs = []
+        for x0, tf in zip(x0s, tfs):
+            sv0 = np.array([*x0, *np.eye(6).flatten()])
+            ts, ys, _, _ = dop853(
+                coupled_stm_eom,
+                (0.0, tf),
+                sv0,
+                self.int_tol,
+                self.int_tol,
+                args=(self.mu,),
+            )
+            xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
+            xf = np.array(xf)
+            eomf = eom(ts[-1], xf, self.mu)
+            stms.append(stm)
+            eomfs.append(eomf)
 
-        dF = self.DF(stm, eomf)
+        dF = self.DF(stms, eomfs)
         f = self.f(x0, xf)
         return f, dF, stm
 
@@ -840,13 +837,13 @@ class axial:
         self.mu = mu
 
     def get_X(self, x0: NDArray, tf: float):
-        return np.array([x0[0], x0[-2], x0[-1], tf])
+        return np.array([x0[0], x0[-2], x0[-1], tf / 2])
 
     def get_x0(self, X: NDArray):
         return np.array([X[0], 0, 0, 0, X[1], X[2]])
 
     def get_tf(self, X: NDArray):
-        return X[-1]
+        return X[-1] * 2
 
     def DF(self, stm: NDArray, eomf: NDArray):
         dF = np.hstack((stm, eomf[:, None]))
@@ -863,17 +860,20 @@ class axial:
         xstmIC = np.array([*x0, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
             coupled_stm_eom,
-            (0.0, tf),
+            (0.0, tf / 2),
             xstmIC,
             self.int_tol,
             self.int_tol,
             args=(self.mu,),
         )
-        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
+        xf, stm_half = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         xf = np.array(xf)
         eomf = eom(ts[-1], xf, self.mu)
 
-        dF = self.DF(stm, eomf)
+        G = np.diag([1, -1, -1, -1, 1, 1])
+        stm = G @ np.linalg.inv(stm_half) @ G @ stm_half
+
+        dF = self.DF(stm_half, eomf)
         f = self.f(x0, xf)
         return f, dF, stm
 

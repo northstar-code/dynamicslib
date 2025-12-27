@@ -167,6 +167,24 @@ def prop_ic_fullstate(
     return xs
 
 
+def prop(
+    x0: NDArray,
+    tf: float,
+    mu: float = muEM,
+    int_tol: float = 1e-11,
+    density_mult: int | None = 2,
+):
+    dense = True if density_mult is not None and density_mult > 1 else False
+    ts, xs1, _, Fs = dop853(
+        eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,), dense_output=dense
+    )
+    if dense:
+        ts, xs = dop_interpolate(ts, xs1.T, Fs, n_mult=density_mult)
+        return xs
+    else:
+        return xs1
+
+
 def manifold_stepoffs(
     x0: NDArray,
     period: float,
