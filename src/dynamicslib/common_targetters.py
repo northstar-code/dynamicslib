@@ -3,46 +3,54 @@ from dynamicslib.common import muEM, jacobi_constant, coupled_stm_eom, eom, JCgr
 from dynamicslib.integrate import dop853, rk8_step
 from dynamicslib.interpolate import dop_interpolate
 from numpy.typing import NDArray
-from typing import Tuple
+from typing import Tuple, List
+from abc import ABC, abstractmethod
 
 
-# class Targetter(ABC):
-#     @abstractmethod
-#     def get_X(self, *args, **kwargs):
-#         return np.empty((0,),np.float64)
-#     @abstractmethod
-#     def get_x0(self, *args, **kwargs):
-#         return np.empty((6,),np.float64)
-#     @abstractmethod
-#     def get_tf(self, *args, **kwargs):
-#         return 0.
-#     @abstractmethod
-#     def DF(self, *args, **kwargs):
-#         return np.empty((0,0),np.float64)
-#     @abstractmethod
-#     def f(self, *args, **kwargs):
-#         return np.empty((0),np.float64)
-#     @abstractmethod
-#     def f_df_stm(self, *args, **kwargs):
-#         f = self.f(*args, *kwargs)
-#         df = self.DF(*args, *kwargs)
-#         stm = np.empty((6,6))
-#         return f, df, stm
+class Targetter(ABC):
+    @abstractmethod
+    def __init__(self, int_tol: float, mu: float, *args, **kwargs):
+        self.mu = np.nan
+        self.int_tol = np.nan
+
+    @abstractmethod
+    def get_X(self, x0: NDArray, period: float) -> NDArray:
+        pass
+
+    @abstractmethod
+    def get_x0(self, X: NDArray) -> NDArray:
+        pass
+
+    @abstractmethod
+    def get_period(self, X: NDArray) -> float:
+        pass
+
+    @abstractmethod
+    def DF(self, *args, **kwargs) -> NDArray:
+        pass
+
+    @abstractmethod
+    def f(self, *args, **kwargs) -> NDArray:
+        pass
+
+    @abstractmethod
+    def f_df_stm(self, X: NDArray, *args, **kwargs) -> Tuple[NDArray, NDArray, NDArray]:
+        pass
 
 
-class JC_fixed_spatial_perpendicular:
+class JC_fixed_spatial_perpendicular(Targetter):
     def __init__(self, int_tol: float, JC_targ: float, mu: float = muEM):
         self.int_tol = int_tol
         self.JC_targ = JC_targ
         self.mu = mu
 
-    def get_X(self, x0: NDArray, tf: float):
-        return np.array([x0[0], x0[2], x0[-2], tf / 2])
+    def get_X(self, x0: NDArray, period: float):
+        return np.array([x0[0], x0[2], x0[-2], period / 2])
 
     def get_x0(self, X: NDArray):
         return np.array([X[0], 0, X[1], 0, X[2], 0])
 
-    def get_tf(self, X: NDArray):
+    def get_period(self, X: NDArray):
         return X[-1] * 2
 
     def DF(self, x0: NDArray, stm: NDArray, eomf: NDArray):
@@ -77,11 +85,11 @@ class JC_fixed_spatial_perpendicular:
         if JC_target is None:
             JC_target = self.JC_targ
         x0 = self.get_x0(X)
-        tf = self.get_tf(X)
+        period = self.get_period(X)
         xstmIC = np.array([*x0, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
             coupled_stm_eom,
-            (0.0, tf / 2),
+            (0.0, period / 2),
             xstmIC,
             self.int_tol,
             self.int_tol,
@@ -102,6 +110,550 @@ class JC_fixed_spatial_perpendicular:
         mtx2 = np.block([[-2 * Omega, I], [-I, O]])
         stm_full = G @ mtx1 @ stm.T @ mtx2 @ G @ stm
         return f, dF, stm_full
+
+
+class spatial_perpendicular(Targetter):
+    def __init__(self, int_tol: float, mu: float = muEM):
+        self.int_tol = int_tol
+        self.mu = mu
+
+    def get_X(self, x0: NDArray, period: float):
+        return np.array([x0[0], x0[2], x0[-2], period / 2])
+
+    def get_x0(self, X: NDArray):
+        return np.array([X[0], 0, X[1], 0, X[2], 0])
+
+    def get_period(self, X: NDArray):
+        return X[-1] * 2
+
+    def DF(self, stm: NDArray, eomf: NDArray):
+        dF = np.array(
+            [
+                [stm[1, 0], stm[1, 2], stm[1, -2], eomf[1]],
+                [stm[-3, 0], stm[-3, 2], stm[-3, -2], eomf[-3]],
+                [stm[-1, 0], stm[-1, 2], stm[-1, -2], eomf[-1]],
+            ]
+        )
+        return dF
+
+    def f(self, xf: NDArray):
+        return np.array([xf[1], xf[-3], xf[-1]])
+
+    def f_df_stm(self, X: NDArray):
+        x0 = self.get_x0(X)
+        period = self.get_period(X)
+        xstmIC = np.array([*x0, *np.eye(6).flatten()])
+        ts, ys, _, _ = dop853(
+            coupled_stm_eom,
+            (0.0, period / 2),
+            xstmIC,
+            self.int_tol,
+            self.int_tol,
+            args=(self.mu,),
+        )
+        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
+        xf = np.array(xf)
+        eomf = eom(ts[-1], xf, self.mu)
+
+        dF = self.DF(stm, eomf)
+        f = self.f(xf)
+
+        G = np.diag([1, -1, 1, -1, 1, -1])
+        Omega = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 0]])
+        I = np.identity(3)
+        O = np.zeros((3, 3))
+        mtx1 = np.block([[O, -I], [I, -2 * Omega]])
+        mtx2 = np.block([[-2 * Omega, I], [-I, O]])
+        stm_full = G @ mtx1 @ stm.T @ mtx2 @ G @ stm
+        return f, dF, stm_full
+
+
+class fullstate_minus_one(Targetter):
+    def __init__(
+        self,
+        index_fixed: int,
+        index_no_enforce: int,
+        value_fixed: float,
+        int_tol: float,
+        mu: float = muEM,
+    ):
+        self.int_tol = int_tol
+        self.mu = mu
+        self.ind_fixed = index_fixed
+        self.state_val = value_fixed
+        self.ind_skip = index_no_enforce
+        assert 0 <= self.ind_fixed < 6
+        assert 0 <= self.ind_skip < 6
+
+    def get_X(self, x0: NDArray, period: float):
+        return np.append(np.delete(x0, self.ind_fixed), period)
+
+    def get_x0(self, X: NDArray):
+        states = np.array(X[:-1])
+        return np.insert(states, self.ind_fixed, self.state_val)
+
+    def get_period(self, X: NDArray):
+        return X[-1]
+
+    def DF(self, stm: NDArray, eomf: NDArray):
+        dF = np.hstack((stm - np.eye(6), eomf[:, None]))
+        dF = np.delete(dF, self.ind_fixed, 1)
+        dF = np.delete(dF, self.ind_skip, 0)
+        return dF
+
+    def f(self, x0: NDArray, xf: NDArray):
+        state_diff = xf - x0
+        out = np.delete(state_diff, self.ind_skip)
+        return out
+
+    def f_df_stm(self, X: NDArray):
+        x0 = self.get_x0(X)
+        period = self.get_period(X)
+        xstmIC = np.array([*x0, *np.eye(6).flatten()])
+        ts, ys, _, _ = dop853(
+            coupled_stm_eom,
+            (0.0, period),
+            xstmIC,
+            self.int_tol,
+            self.int_tol,
+            args=(self.mu,),
+        )
+        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
+        xf = np.array(xf)
+        eomf = eom(ts[-1], xf, self.mu)
+
+        dF = self.DF(stm, eomf)
+        f = self.f(x0, xf)
+        return f, dF, stm
+
+
+class axial(Targetter):
+    def __init__(
+        self,
+        int_tol: float,
+        mu: float = muEM,
+    ):
+        self.int_tol = int_tol
+        self.mu = mu
+
+    def get_X(self, x0: NDArray, period: float):
+        return np.array([x0[0], x0[-2], x0[-1], period / 2])
+
+    def get_x0(self, X: NDArray):
+        return np.array([X[0], 0, 0, 0, X[1], X[2]])
+
+    def get_period(self, X: NDArray):
+        return X[-1] * 2
+
+    def DF(self, stm: NDArray, eomf: NDArray):
+        dF = np.hstack((stm, eomf[:, None]))
+        dF = np.delete(dF, [1, 2, 3], 1)
+        dF = np.delete(dF, [0, 4, 5], 0)
+        return dF
+
+    def f(self, x0: NDArray, xf: NDArray):
+        return np.array([xf[1], xf[2], xf[3]])
+
+    def f_df_stm(self, X: NDArray):
+        x0 = self.get_x0(X)
+        period = self.get_period(X)
+        xstmIC = np.array([*x0, *np.eye(6).flatten()])
+        ts, ys, _, _ = dop853(
+            coupled_stm_eom,
+            (0.0, period / 2),
+            xstmIC,
+            self.int_tol,
+            self.int_tol,
+            args=(self.mu,),
+        )
+        xf, stm_half = ys[:6, -1], ys[6:, -1].reshape(6, 6)
+        xf = np.array(xf)
+        eomf = eom(ts[-1], xf, self.mu)
+
+        G = np.diag([1, -1, -1, -1, 1, 1])
+        stm = G @ np.linalg.inv(stm_half) @ G @ stm_half
+
+        dF = self.DF(stm_half, eomf)
+        f = self.f(x0, xf)
+        return f, dF, stm
+
+
+class xy_symmetric(Targetter):
+    def __init__(self, int_tol: float, mu: float = muEM):
+        self.int_tol = int_tol
+        self.mu = mu
+
+    def get_X(self, x0: NDArray, period: float):
+        return np.array([x0[0], x0[1], x0[-3], x0[-2], x0[-1], period / 2])
+
+    def get_x0(self, X: NDArray):
+        return np.array([X[0], X[1], 0, X[2], X[3], X[4]])
+
+    def get_period(self, X: NDArray):
+        return X[-1] * 2
+
+    def DF(self, stm: NDArray, eomf: NDArray):
+        dF = np.hstack((stm - np.eye(6), eomf[:, None]))
+        dF = np.delete(dF, 2, 1)
+        dF = np.delete(dF, -1, 0)
+        return dF
+
+    def f(self, x0: NDArray, xf: NDArray):
+        return np.array([*(xf - x0)[:3], *(xf - x0)[[-3, -2]]])
+
+    def f_df_stm(self, X: NDArray):
+        x0 = self.get_x0(X)
+        period = self.get_period(X)
+        xstmIC = np.array([*x0, *np.eye(6).flatten()])
+        ts, ys, _, _ = dop853(
+            coupled_stm_eom,
+            (0.0, period / 2),
+            xstmIC,
+            self.int_tol,
+            self.int_tol,
+            args=(self.mu,),
+        )
+        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
+        xf = np.array(xf)
+        eomf = eom(ts[-1], xf, self.mu)
+
+        dF = self.DF(stm, eomf)
+        f = self.f(x0, xf)
+
+        R = np.diag([1, 1, -1, 1, 1, -1])
+        stm_full = R @ stm @ R @ stm
+        return f, dF, stm_full
+
+
+class spatial_period_fixed(Targetter):
+    def __init__(self, int_tol: float, period: float, mu: float = muEM):
+        self.int_tol = int_tol
+        self.mu = mu
+        self.period = period
+
+    def get_X(self, x0: NDArray, period: float = np.nan):
+        return np.array([x0[0], x0[2], x0[-2]])
+
+    def get_x0(self, X: NDArray):
+        return np.array([X[0], 0, X[1], 0, X[2], 0])
+
+    def DF(self, stm: NDArray, eomf: NDArray):
+        dF = np.array(
+            [
+                [stm[1, 0], stm[1, 2], stm[1, -2]],
+                [stm[-3, 0], stm[-3, 2], stm[-3, -2]],
+                [stm[-1, 0], stm[-1, 2], stm[-1, -2]],
+            ]
+        )
+        return dF
+
+    def f(self, xf: NDArray):
+        return np.array([xf[1], xf[-3], xf[-1]])
+
+    def f_df_stm(self, X: NDArray):
+        x0 = self.get_x0(X)
+        period = self.period
+        xstmIC = np.array([*x0, *np.eye(6).flatten()])
+        ts, ys, _, _ = dop853(
+            coupled_stm_eom,
+            (0.0, period / 2),
+            xstmIC,
+            self.int_tol,
+            self.int_tol,
+            args=(self.mu,),
+        )
+        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
+        xf = np.array(xf)
+        eomf = eom(ts[-1], xf, self.mu)
+
+        dF = self.DF(stm, eomf)
+        f = self.f(xf)
+
+        G = np.diag([1, -1, 1, -1, 1, -1])
+        Omega = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 0]])
+        I = np.identity(3)
+        O = np.zeros((3, 3))
+        mtx1 = np.block([[O, -I], [I, -2 * Omega]])
+        mtx2 = np.block([[-2 * Omega, I], [-I, O]])
+        stm_full = G @ mtx1 @ stm.T @ mtx2 @ G @ stm
+        return f, dF, stm_full
+
+
+class period_fixed_spatial_perpendicular(Targetter):
+    def __init__(self, period: float, int_tol: float, mu: float = muEM):
+        self.int_tol = int_tol
+        self.mu = mu
+        self.period = period
+
+    def get_X(self, x0: NDArray, period: float):
+        return np.array([x0[0], x0[2], x0[-2]])
+
+    def get_x0(self, X: NDArray):
+        return np.array([X[0], 0, X[1], 0, X[2], 0])
+
+    def DF(self, stm: NDArray):
+        dF = np.array(
+            [
+                [stm[1, 0], stm[1, 2], stm[1, -2]],
+                [stm[-3, 0], stm[-3, 2], stm[-3, -2]],
+                [stm[-1, 0], stm[-1, 2], stm[-1, -2]],
+            ]
+        )
+        return dF
+
+    def f(self, xf: NDArray):
+        return np.array([xf[1], xf[-3], xf[-1]])
+
+    def f_df_stm(self, X: NDArray, period: float | None = None):
+        if period is None:
+            period = self.period
+        x0 = self.get_x0(X)
+        xstmIC = np.array([*x0, *np.eye(6).flatten()])
+        ts, ys, _, _ = dop853(
+            coupled_stm_eom,
+            (0.0, period / 2),
+            xstmIC,
+            self.int_tol,
+            self.int_tol,
+            args=(self.mu,),
+        )
+        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
+        xf = np.array(xf)
+
+        dF = self.DF(stm)
+        f = self.f(xf)
+
+        G = np.diag([1, -1, 1, -1, 1, -1])
+        Omega = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 0]])
+        I = np.identity(3)
+        O = np.zeros((3, 3))
+        mtx1 = np.block([[O, -I], [I, -2 * Omega]])
+        mtx2 = np.block([[-2 * Omega, I], [-I, O]])
+        stm_full = G @ mtx1 @ stm.T @ mtx2 @ G @ stm
+        return f, dF, stm_full
+
+
+class planar_perpendicular(Targetter):
+    def __init__(self, int_tol: float, mu: float = muEM):
+        self.int_tol = int_tol
+        self.mu = mu
+
+    def get_X(self, x0: NDArray, period: float):
+        return np.array([x0[0], x0[-2], period / 2])
+
+    def get_x0(self, X: NDArray):
+        return np.array([X[0], 0, 0, 0, X[1], 0])
+
+    def get_period(self, X: NDArray):
+        return X[-1] * 2
+
+    def DF(self, stm: NDArray, eomf: NDArray):
+        dF = np.array(
+            [
+                [stm[1, 0], stm[1, -2], eomf[1]],
+                [stm[-3, 0], stm[-3, -2], eomf[-3]],
+            ]
+        )
+        return dF
+
+    def f(self, xf: NDArray):
+        return np.array([xf[1], xf[-3]])
+
+    def f_df_stm(self, X: NDArray):
+        x0 = self.get_x0(X)
+        period = self.get_period(X)
+        xstmIC = np.array([*x0, *np.eye(6).flatten()])
+        ts, ys, _, _ = dop853(
+            coupled_stm_eom,
+            (0.0, period / 2),
+            xstmIC,
+            self.int_tol,
+            self.int_tol,
+            args=(self.mu,),
+        )
+        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
+        xf = np.array(xf)
+        eomf = eom(ts[-1], xf, self.mu)
+
+        dF = self.DF(stm, eomf)
+        f = self.f(xf)
+
+        G = np.diag([1, -1, 1, -1, 1, -1])
+        Omega = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 0]])
+        I = np.identity(3)
+        O = np.zeros((3, 3))
+        mtx1 = np.block([[O, -I], [I, -2 * Omega]])
+        mtx2 = np.block([[-2 * Omega, I], [-I, O]])
+        stm_full = G @ mtx1 @ stm.T @ mtx2 @ G @ stm
+        return f, dF, stm_full
+
+
+class multi_shooter(Targetter):
+    # problem: currently super under constrained (6N-1 x 7N-1). I could make it work by forcing segments to be equal duration?
+    def __init__(
+        self,
+        index_fixed: int,
+        index_no_enforce: int,
+        value_fixed: float,
+        N_segments: int = 2,
+        int_tol: float = 1e-11,
+        mu: float = muEM,
+    ):
+        self.int_tol = int_tol
+        self.mu = mu
+        self.ind_fixed = index_fixed
+        self.state_val = value_fixed
+        self.ind_skip = index_no_enforce
+        self.nseg = N_segments
+        assert 0 <= self.ind_fixed < 6
+        assert 0 <= self.ind_skip < 6
+        assert self.nseg > 1
+
+    def get_X(self, x0: NDArray, period: float):
+        # Propagate with arbitrary timesteps
+        ts, xs, _, Fs = dop853(
+            eom,
+            (0.0, period),
+            x0,
+            self.int_tol,
+            self.int_tol,
+            args=(self.mu,),
+            dense_output=True,
+        )
+        # ensure that num timesteps is divisible by num segments
+        xe, te = dop_interpolate(ts, xs.T, Fs, n_mult=self.nseg)
+        max_ind = len(ts) - 1  # maximum index to new list
+        Xsi = []
+        for jj in range(self.nseg):
+            # get indices to access
+            i0 = jj * max_ind / self.nseg
+            i1 = (jj + 1) * max_ind / self.nseg
+            assert np.all([i0 == int(i0), i1 == int(i1)])
+            i0, i1 = int(i0), int(i1)
+
+            x0i = xe[:, i0]
+            if jj == 0:
+                x0i = np.delete(x0i, self.ind_fixed)
+            dti = te[i1] - te[i0]
+            Xsi.append(np.append(x0i, dti))
+        return np.concat(Xsi)
+
+    def get_x0_segment(self, X: NDArray, segment: int):
+        # NOTE: segment is 0-indexed
+        i0 = 7 * (segment)  # Index of control variable to start
+        i1 = 7 * (segment + 1) - 1  # idx of control variable to end (X0 is one smaller)
+        Xsegment = X[i0:i1].copy()
+        states = Xsegment[:-1]  # cut off time
+        if segment == 0:
+            states = np.insert(states, self.ind_fixed, self.state_val)
+        return states
+
+    def get_x0s(self, X: NDArray):
+        x0s = []
+        for segment in range(self.nseg):
+            x0s.append(self.get_x0_segment(X, segment))
+        return x0s
+
+    def get_dt_segment(self, X: NDArray, segment: int):
+        # NOTE: segment is 0-indexed
+        i0 = 7 * (segment)  # Index of control variable to start
+        i1 = 7 * (segment + 1) - 1  # idx of control variable to end (X0 is one smaller)
+        Xsegment = X[i0:i1].copy()
+        return Xsegment[-1]
+
+    def get_x0(self, X: NDArray):
+        return self.get_x0_segment(X, 0)
+
+    def get_dts(self, X: NDArray):
+        dts = []
+        for segment in range(self.nseg):
+            dts.append(self.get_dt_segment(X, segment))
+        return dts
+
+    def get_period(self, X: NDArray):
+        return sum(self.get_dts(X))
+
+    def f(self, x0_segments: Tuple[NDArray], xf_segments: Tuple[NDArray]):
+        assert len(xf_segments) == len(x0_segments) == self.nseg
+        # f[j] = xf[j] - x0[j+1] except where j+1 is num segments
+        f_segments = []
+        for jj in range(self.nseg):
+            ind_xf = jj
+            ind_x0 = (jj + 1) % self.nseg
+            state_diff = xf_segments[ind_xf] - x0_segments[ind_x0]
+            if jj == self.nseg:
+                state_diff = np.delete(state_diff, self.ind_skip)
+            f_segments.append(state_diff)
+        return np.concat(f_segments)
+
+    def DF(
+        self,
+        stm_segments: Tuple[NDArray] | List[NDArray],
+        # eom0_segments: Tuple[NDArray],
+        eomf_segments: Tuple[NDArray] | List[NDArray],
+    ):
+        # WIP/TODO
+        dF = np.zeros((6 * self.nseg, 7 * self.nseg), np.float64)
+        for jj in range(self.nseg):
+            ind0_xf = 7 * (jj)
+            ind0_x0 = 7 * ((jj + 1) % self.nseg)
+            ind1_xf = 7 * (jj) + 7
+            ind1_x0 = 7 * ((jj + 1) % self.nseg) + 7
+            stm_part = np.hstack(stm_segments[jj], eomf_segments[jj][:, None])
+            dF[ind0_xf:ind1_xf, ind0_x0:ind1_x0] = stm_part
+            dF[ind0_xf:ind1_xf, (ind0_x0 + 7) : (ind1_x0 + 7)] = -np.eye(6)
+
+        dF = np.delete(dF, self.ind_fixed, 1)
+        dF = np.delete(dF, self.ind_skip + 6 * (self.nseg - 1), 0)
+        return dF
+
+    def f_df_stm(self, X: NDArray):
+        # WIP/TODO
+        x0s = self.get_x0s(X)
+        tfs = self.get_dts(X)
+        stms = []
+        eomfs = []
+        for x0, tf in zip(x0s, tfs):
+            sv0 = np.array([*x0, *np.eye(6).flatten()])
+            ts, ys, _, _ = dop853(
+                coupled_stm_eom,
+                (0.0, tf),
+                sv0,
+                self.int_tol,
+                self.int_tol,
+                args=(self.mu,),
+            )
+            xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
+            xf = np.array(xf)
+            eomf = eom(ts[-1], xf, self.mu)
+            stms.append(stm)
+            eomfs.append(eomf)
+
+        dF = self.DF(stms, eomfs)
+        f = self.f(x0, xf)
+        return f, dF, stm
+
+
+def propagate_X(
+    targetter: Targetter, X: NDArray, fraction: float = 1 / 2, int_tol: float = 1e-13
+):
+    assert 0 < fraction < 1
+    x0 = targetter.get_x0(X)
+    period = targetter.get_period(X)
+    tf = period * fraction
+    ts, ys, _, _ = dop853(
+        eom,
+        (0.0, tf),
+        x0,
+        int_tol,
+        int_tol,
+        args=(targetter.mu,),
+    )
+    xf = ys[:, -1]
+    return targetter.get_X(xf, period)
+
+
+# %% Heteroclinic connections
 
 
 # target full state contenuity
@@ -564,525 +1116,3 @@ class manifold_higher_dim:
         f = self.f(xf_u, xf_s)
         print(np.linalg.norm(f))
         return f, dF, None
-
-
-class spatial_perpendicular:
-    def __init__(self, int_tol: float, mu: float = muEM):
-        self.int_tol = int_tol
-        self.mu = mu
-
-    def get_X(self, x0: NDArray, tf: float):
-        return np.array([x0[0], x0[2], x0[-2], tf / 2])
-
-    def get_x0(self, X: NDArray):
-        return np.array([X[0], 0, X[1], 0, X[2], 0])
-
-    def get_tf(self, X: NDArray):
-        return X[-1] * 2
-
-    def DF(self, stm: NDArray, eomf: NDArray):
-        dF = np.array(
-            [
-                [stm[1, 0], stm[1, 2], stm[1, -2], eomf[1]],
-                [stm[-3, 0], stm[-3, 2], stm[-3, -2], eomf[-3]],
-                [stm[-1, 0], stm[-1, 2], stm[-1, -2], eomf[-1]],
-            ]
-        )
-        return dF
-
-    def f(self, xf: NDArray):
-        return np.array([xf[1], xf[-3], xf[-1]])
-
-    def f_df_stm(self, X: NDArray):
-        x0 = self.get_x0(X)
-        tf = self.get_tf(X)
-        xstmIC = np.array([*x0, *np.eye(6).flatten()])
-        ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, tf / 2),
-            xstmIC,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
-        )
-        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
-        xf = np.array(xf)
-        eomf = eom(ts[-1], xf, self.mu)
-
-        dF = self.DF(stm, eomf)
-        f = self.f(xf)
-
-        G = np.diag([1, -1, 1, -1, 1, -1])
-        Omega = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 0]])
-        I = np.identity(3)
-        O = np.zeros((3, 3))
-        mtx1 = np.block([[O, -I], [I, -2 * Omega]])
-        mtx2 = np.block([[-2 * Omega, I], [-I, O]])
-        stm_full = G @ mtx1 @ stm.T @ mtx2 @ G @ stm
-        return f, dF, stm_full
-
-
-class fullstate_minus_one:
-    def __init__(
-        self,
-        index_fixed: int,
-        index_no_enforce: int,
-        value_fixed: float,
-        int_tol: float,
-        mu: float = muEM,
-    ):
-        self.int_tol = int_tol
-        self.mu = mu
-        self.ind_fixed = index_fixed
-        self.state_val = value_fixed
-        self.ind_skip = index_no_enforce
-        assert 0 <= self.ind_fixed < 6
-        assert 0 <= self.ind_skip < 6
-
-    def get_X(self, x0: NDArray, tf: float):
-        return np.append(np.delete(x0, self.ind_fixed), tf)
-
-    def get_x0(self, X: NDArray):
-        states = np.array(X[:-1])
-        return np.insert(states, self.ind_fixed, self.state_val)
-
-    def get_tf(self, X: NDArray):
-        return X[-1]
-
-    def DF(self, stm: NDArray, eomf: NDArray):
-        dF = np.hstack((stm - np.eye(6), eomf[:, None]))
-        dF = np.delete(dF, self.ind_fixed, 1)
-        dF = np.delete(dF, self.ind_skip, 0)
-        return dF
-
-    def f(self, x0: NDArray, xf: NDArray):
-        state_diff = xf - x0
-        out = np.delete(state_diff, self.ind_skip)
-        return out
-
-    def f_df_stm(self, X: NDArray):
-        x0 = self.get_x0(X)
-        tf = self.get_tf(X)
-        xstmIC = np.array([*x0, *np.eye(6).flatten()])
-        ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, tf),
-            xstmIC,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
-        )
-        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
-        xf = np.array(xf)
-        eomf = eom(ts[-1], xf, self.mu)
-
-        dF = self.DF(stm, eomf)
-        f = self.f(x0, xf)
-        return f, dF, stm
-
-
-class multi_shooter:
-    # problem: currently super under constrained (6N-1 x 7N-1). I could make it work by forcing segments to be equal duration?
-    def __init__(
-        self,
-        index_fixed: int,
-        index_no_enforce: int,
-        value_fixed: float,
-        N_segments: int = 2,
-        int_tol: float = 1e-11,
-        mu: float = muEM,
-    ):
-        self.int_tol = int_tol
-        self.mu = mu
-        self.ind_fixed = index_fixed
-        self.state_val = value_fixed
-        self.ind_skip = index_no_enforce
-        self.nseg = N_segments
-        assert 0 <= self.ind_fixed < 6
-        assert 0 <= self.ind_skip < 6
-        assert self.nseg > 1
-
-    def get_X(self, x0: NDArray, tf: float):
-        # Propagate with arbitrary timesteps
-        ts, xs, _, Fs = dop853(
-            eom,
-            (0.0, tf),
-            x0,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
-            dense_output=True,
-        )
-        # ensure that num timesteps is divisible by num segments
-        xe, te = dop_interpolate(ts, xs.T, Fs, n_mult=self.nseg)
-        max_ind = len(ts) - 1  # maximum index to new list
-        Xsi = []
-        for jj in range(self.nseg):
-            # get indices to access
-            i0 = jj * max_ind / self.nseg
-            i1 = (jj + 1) * max_ind / self.nseg
-            assert np.all([i0 == int(i0), i1 == int(i1)])
-            i0, i1 = int(i0), int(i1)
-
-            x0i = xe[:, i0]
-            if jj == 0:
-                x0i = np.delete(x0i, self.ind_fixed)
-            dti = te[i1] - te[i0]
-            Xsi.append(np.append(x0i, dti))
-        return np.concat(Xsi)
-
-    def get_x0_segment(self, X: NDArray, segment: int):
-        # NOTE: segment is 0-indexed
-        i0 = 7 * (segment)  # Index of control variable to start
-        i1 = 7 * (segment + 1) - 1  # idx of control variable to end (X0 is one smaller)
-        Xsegment = X[i0:i1].copy()
-        states = Xsegment[:-1]  # cut off time
-        if segment == 0:
-            states = np.insert(states, self.ind_fixed, self.state_val)
-        return states
-
-    def get_x0s(self, X: NDArray):
-        x0s = []
-        for segment in range(self.nseg):
-            x0s.append(self.get_x0_segment(X, segment))
-        return x0s
-
-    def get_dt_segment(self, X: NDArray, segment: int):
-        # NOTE: segment is 0-indexed
-        i0 = 7 * (segment)  # Index of control variable to start
-        i1 = 7 * (segment + 1) - 1  # idx of control variable to end (X0 is one smaller)
-        Xsegment = X[i0:i1].copy()
-        return Xsegment[-1]
-
-    def get_x0(self, X):
-        return self.get_x0_segment(X, 0)
-
-    def get_dts(self, X: NDArray):
-        dts = []
-        for segment in range(self.nseg):
-            dts.append(self.get_dt_segment(X, segment))
-        return dts
-
-    def get_tf(self, X: NDArray):
-        return sum(self.get_dts(X))
-
-    def f(self, x0_segments: Tuple[NDArray], xf_segments: Tuple[NDArray]):
-        assert len(xf_segments) == len(x0_segments) == self.nseg
-        # f[j] = xf[j] - x0[j+1] except where j+1 is num segments
-        f_segments = []
-        for jj in range(self.nseg):
-            ind_xf = jj
-            ind_x0 = (jj + 1) % self.nseg
-            state_diff = xf_segments[ind_xf] - x0_segments[ind_x0]
-            if jj == self.nseg:
-                state_diff = np.delete(state_diff, self.ind_skip)
-            f_segments.append(state_diff)
-        return np.concat(f_segments)
-
-    def DF(
-        self,
-        stm_segments: Tuple[NDArray] | List[NDArray],
-        # eom0_segments: Tuple[NDArray],
-        eomf_segments: Tuple[NDArray] | List[NDArray],
-    ):
-        # WIP/TODO
-        dF = np.zeros((6 * self.nseg, 7 * self.nseg), np.float64)
-        for jj in range(self.nseg):
-            ind0_xf = 7 * (jj)
-            ind0_x0 = 7 * ((jj + 1) % self.nseg)
-            ind1_xf = 7 * (jj) + 7
-            ind1_x0 = 7 * ((jj + 1) % self.nseg) + 7
-            stm_part = np.hstack(stm_segments[jj], eomf_segments[jj][:, None])
-            dF[ind0_xf:ind1_xf, ind0_x0:ind1_x0] = stm_part
-            dF[ind0_xf:ind1_xf, (ind0_x0 + 7) : (ind1_x0 + 7)] = -np.eye(6)
-
-        dF = np.delete(dF, self.ind_fixed, 1)
-        dF = np.delete(dF, self.ind_skip + 6 * (self.nseg - 1), 0)
-        return dF
-
-    def f_df_stm(self, X: NDArray):
-        # WIP/TODO
-        x0s = self.get_x0s(X)
-        tfs = self.get_dts(X)
-        stms = []
-        eomfs = []
-        for x0, tf in zip(x0s, tfs):
-            sv0 = np.array([*x0, *np.eye(6).flatten()])
-            ts, ys, _, _ = dop853(
-                coupled_stm_eom,
-                (0.0, tf),
-                sv0,
-                self.int_tol,
-                self.int_tol,
-                args=(self.mu,),
-            )
-            xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
-            xf = np.array(xf)
-            eomf = eom(ts[-1], xf, self.mu)
-            stms.append(stm)
-            eomfs.append(eomf)
-
-        dF = self.DF(stms, eomfs)
-        f = self.f(x0, xf)
-        return f, dF, stm
-
-
-class axial:
-    def __init__(
-        self,
-        int_tol: float,
-        mu: float = muEM,
-    ):
-        self.int_tol = int_tol
-        self.mu = mu
-
-    def get_X(self, x0: NDArray, tf: float):
-        return np.array([x0[0], x0[-2], x0[-1], tf / 2])
-
-    def get_x0(self, X: NDArray):
-        return np.array([X[0], 0, 0, 0, X[1], X[2]])
-
-    def get_tf(self, X: NDArray):
-        return X[-1] * 2
-
-    def DF(self, stm: NDArray, eomf: NDArray):
-        dF = np.hstack((stm, eomf[:, None]))
-        dF = np.delete(dF, [1, 2, 3], 1)
-        dF = np.delete(dF, [0, 4, 5], 0)
-        return dF
-
-    def f(self, x0: NDArray, xf: NDArray):
-        return np.array([xf[1], xf[2], xf[3]])
-
-    def f_df_stm(self, X: NDArray):
-        x0 = self.get_x0(X)
-        tf = self.get_tf(X)
-        xstmIC = np.array([*x0, *np.eye(6).flatten()])
-        ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, tf / 2),
-            xstmIC,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
-        )
-        xf, stm_half = ys[:6, -1], ys[6:, -1].reshape(6, 6)
-        xf = np.array(xf)
-        eomf = eom(ts[-1], xf, self.mu)
-
-        G = np.diag([1, -1, -1, -1, 1, 1])
-        stm = G @ np.linalg.inv(stm_half) @ G @ stm_half
-
-        dF = self.DF(stm_half, eomf)
-        f = self.f(x0, xf)
-        return f, dF, stm
-
-
-class xy_symmetric:
-    def __init__(self, int_tol: float, mu: float = muEM):
-        self.int_tol = int_tol
-        self.mu = mu
-
-    def get_X(self, x0: NDArray, tf: float):
-        return np.array([x0[0], x0[1], x0[-3], x0[-2], x0[-1], tf / 2])
-
-    def get_x0(self, X: NDArray):
-        return np.array([X[0], X[1], 0, X[2], X[3], X[4]])
-
-    def get_tf(self, X: NDArray):
-        return X[-1] * 2
-
-    def DF(self, stm: NDArray, eomf: NDArray):
-        dF = np.hstack((stm - np.eye(6), eomf[:, None]))
-        dF = np.delete(dF, 2, 1)
-        dF = np.delete(dF, -1, 0)
-        return dF
-
-    def f(self, x0: NDArray, xf: NDArray):
-        return np.array([*(xf - x0)[:3], *(xf - x0)[[-3, -2]]])
-
-    def f_df_stm(self, X: NDArray):
-        x0 = self.get_x0(X)
-        tf = self.get_tf(X)
-        xstmIC = np.array([*x0, *np.eye(6).flatten()])
-        ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, tf / 2),
-            xstmIC,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
-        )
-        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
-        xf = np.array(xf)
-        eomf = eom(ts[-1], xf, self.mu)
-
-        dF = self.DF(stm, eomf)
-        f = self.f(x0, xf)
-
-        R = np.diag([1, 1, -1, 1, 1, -1])
-        stm_full = R @ stm @ R @ stm
-        return f, dF, stm_full
-
-
-class spatial_period_fixed:
-    def __init__(self, int_tol: float, period: float, mu: float = muEM):
-        self.int_tol = int_tol
-        self.mu = mu
-        self.period = period
-
-    def get_X(self, x0: NDArray):
-        return np.array([x0[0], x0[2], x0[-2]])
-
-    def get_x0(self, X: NDArray):
-        return np.array([X[0], 0, X[1], 0, X[2], 0])
-
-    def DF(self, stm: NDArray, eomf: NDArray):
-        dF = np.array(
-            [
-                [stm[1, 0], stm[1, 2], stm[1, -2]],
-                [stm[-3, 0], stm[-3, 2], stm[-3, -2]],
-                [stm[-1, 0], stm[-1, 2], stm[-1, -2]],
-            ]
-        )
-        return dF
-
-    def f(self, xf: NDArray):
-        return np.array([xf[1], xf[-3], xf[-1]])
-
-    def f_df_stm(self, X: NDArray):
-        x0 = self.get_x0(X)
-        tf = self.period
-        xstmIC = np.array([*x0, *np.eye(6).flatten()])
-        ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, tf / 2),
-            xstmIC,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
-        )
-        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
-        xf = np.array(xf)
-        eomf = eom(ts[-1], xf, self.mu)
-
-        dF = self.DF(stm, eomf)
-        f = self.f(xf)
-
-        G = np.diag([1, -1, 1, -1, 1, -1])
-        Omega = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 0]])
-        I = np.identity(3)
-        O = np.zeros((3, 3))
-        mtx1 = np.block([[O, -I], [I, -2 * Omega]])
-        mtx2 = np.block([[-2 * Omega, I], [-I, O]])
-        stm_full = G @ mtx1 @ stm.T @ mtx2 @ G @ stm
-        return f, dF, stm_full
-
-
-class period_fixed_spatial_perpendicular:
-    def __init__(self, period: float, int_tol: float, mu: float = muEM):
-        self.int_tol = int_tol
-        self.mu = mu
-        self.period = period
-
-    def get_X(self, x0: NDArray, tf: float):
-        return np.array([x0[0], x0[2], x0[-2]])
-
-    def get_x0(self, X: NDArray):
-        return np.array([X[0], 0, X[1], 0, X[2], 0])
-
-    def DF(self, stm: NDArray):
-        dF = np.array(
-            [
-                [stm[1, 0], stm[1, 2], stm[1, -2]],
-                [stm[-3, 0], stm[-3, 2], stm[-3, -2]],
-                [stm[-1, 0], stm[-1, 2], stm[-1, -2]],
-            ]
-        )
-        return dF
-
-    def f(self, xf: NDArray):
-        return np.array([xf[1], xf[-3], xf[-1]])
-
-    def f_df_stm(self, X: NDArray, period: float | None = None):
-        if period is None:
-            period = self.period
-        x0 = self.get_x0(X)
-        xstmIC = np.array([*x0, *np.eye(6).flatten()])
-        ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, period / 2),
-            xstmIC,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
-        )
-        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
-        xf = np.array(xf)
-
-        dF = self.DF(stm)
-        f = self.f(xf)
-
-        G = np.diag([1, -1, 1, -1, 1, -1])
-        Omega = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 0]])
-        I = np.identity(3)
-        O = np.zeros((3, 3))
-        mtx1 = np.block([[O, -I], [I, -2 * Omega]])
-        mtx2 = np.block([[-2 * Omega, I], [-I, O]])
-        stm_full = G @ mtx1 @ stm.T @ mtx2 @ G @ stm
-        return f, dF, stm_full
-
-
-class planar_perpendicular:
-    def __init__(self, int_tol: float, mu: float = muEM):
-        self.int_tol = int_tol
-        self.mu = mu
-
-    def get_X(self, x0: NDArray, tf: float):
-        return np.array([x0[0], x0[-2], tf / 2])
-
-    def get_x0(self, X: NDArray):
-        return np.array([X[0], 0, 0, 0, X[1], 0])
-
-    def get_tf(self, X: NDArray):
-        return X[-1] * 2
-
-    def DF(self, stm: NDArray, eomf: NDArray):
-        dF = np.array(
-            [
-                [stm[1, 0], stm[1, -2], eomf[1]],
-                [stm[-3, 0], stm[-3, -2], eomf[-3]],
-            ]
-        )
-        return dF
-
-    def f(self, xf: NDArray):
-        return np.array([xf[1], xf[-3]])
-
-    def f_df_stm(self, X: NDArray):
-        x0 = self.get_x0(X)
-        tf = self.get_tf(X)
-        xstmIC = np.array([*x0, *np.eye(6).flatten()])
-        ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, tf / 2),
-            xstmIC,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
-        )
-        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
-        xf = np.array(xf)
-        eomf = eom(ts[-1], xf, self.mu)
-
-        dF = self.DF(stm, eomf)
-        f = self.f(xf)
-
-        G = np.diag([1, -1, 1, -1, 1, -1])
-        Omega = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 0]])
-        I = np.identity(3)
-        O = np.zeros((3, 3))
-        mtx1 = np.block([[O, -I], [I, -2 * Omega]])
-        mtx2 = np.block([[-2 * Omega, I], [-I, O]])
-        stm_full = G @ mtx1 @ stm.T @ mtx2 @ G @ stm
-        return f, dF, stm_full

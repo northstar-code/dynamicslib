@@ -12,9 +12,9 @@ from numba import njit
 from scipy.signal import find_peaks
 from base64 import b64encode
 from dash import Dash, dcc, html, Input, Output, callback
-
 from dynamicslib.consts import muEM, LU, TU
 from dynamicslib.common import get_Lpts
+from plotly.subplots import make_subplots
 
 plotly.offline.init_notebook_mode()
 display(
@@ -524,7 +524,7 @@ def plotly_display(
                     sizemode="raw",
                     sizeref=rng / 20,
                     hoverinfo="none",
-                    colorscale = ["rgb(60, 15, 0)","rgb(80, 20, 0)"],
+                    colorscale=["rgb(60, 15, 0)", "rgb(80, 20, 0)"],
                     # colorscale=[darken_color(colors[i_arrow], 0.5)] * 2,
                     showscale=False,
                 )
@@ -682,6 +682,75 @@ def plotly_display(
             return dcc.send_string(html_content, filename="enter_name.html")
 
     app.run(debug=False, use_reloader=False, port=port)
+
+
+def hodographs(
+    df: pd.DataFrame,
+    params=[
+        "Initial x",
+        "Initial y",
+        "Initial z",
+        "Initial vx",
+        "Initial vy",
+        "Initial vz",
+        "Period",
+        "Jacobi Constant",
+    ],
+    colormap="rainbow",
+):
+    n = len(df)
+    params = [
+        param
+        for param in params
+        if param in df.columns and not np.all(np.abs(df[param]) < 1e-10)
+    ]
+    nparam = len(params)
+
+    fig = make_subplots(
+        rows=nparam - 1,
+        cols=nparam - 1,
+        shared_xaxes=True,
+        shared_yaxes=True,
+        vertical_spacing=0.02,
+        horizontal_spacing=0.01,
+    )
+
+    c = px.colors.sample_colorscale(colormap, n)
+    for ix, param_x in enumerate(params[:-1]):
+        for iy, param_y in enumerate(params[1:]):
+            data_x = df[param_x].values
+            data_y = df[param_y].values
+
+            if iy == 0:
+                fig.update_xaxes(title=param_x, row=nparam - 1, col=ix + 1)
+            if ix == 0:
+                fig.update_yaxes(title=param_y, row=iy + 1, col=1)
+
+            if ix > iy:
+                continue
+
+            curve = go.Scatter(
+                x=data_x,
+                y=data_y,
+                name=f"{ix}, {iy}",
+                hoverinfo="x+y",
+                mode="lines",
+                hoverlabel=dict(namelength=-1, bgcolor="black", font_color="white"),
+                # marker=dict(color=c, size=1),
+                line=dict(color="white", width=0.5),
+            )
+            fig.add_trace(curve, row=iy + 1, col=ix + 1)
+
+    fig.update_layout(
+        template="plotly_dark",
+        showlegend=False,
+        margin=dict(l=0, r=0, b=0, t=0),
+        # plot_bgcolor="#000000",
+        paper_bgcolor="#000000",
+        modebar_remove=["autoScale", "lasso2d", "select2d", "toImage"],
+    )
+
+    fig.show()
 
 
 def broucke_diagram(df: pd.DataFrame, html_save: str | None = None, show: bool = True):
