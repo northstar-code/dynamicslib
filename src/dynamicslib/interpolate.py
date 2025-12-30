@@ -1,5 +1,6 @@
 from numba import njit
 from numpy.typing import NDArray
+from typing import Callable, Tuple
 import numpy as np
 
 
@@ -186,10 +187,6 @@ def dop_interpolate(
             ts_interval = t_eval[np.logical_and(t0 <= t_eval, t_eval <= t1)].copy()
         else:
             ts_interval = t_eval[np.logical_and(t0 <= t_eval, t_eval < t1)].copy()
-        # if j == len(ts) - 2:
-        #     ts_interval = np.append(ts_interval, t1)
-        # # for tt in ts_interval:
-        #     tlst.append(tt)
 
         if len(ts_interval):
             x0 = xs[j]
@@ -198,3 +195,98 @@ def dop_interpolate(
             x_eval = np.concatenate((x_eval, newterms))
 
     return t_eval, x_eval.T  # , tlst
+
+
+# @njit(cache=True)
+def interpolate_event(
+    x0: NDArray[np.floating],
+    x1: NDArray[np.floating],
+    t0: float,
+    t1: float,
+    F: NDArray[np.floating],
+    g0: float,
+    g1: float,
+    g: Callable[..., float],
+    args: Tuple = (),
+    tol: float = 1e-12,
+):
+    # Decker's (secant) method: https://en.wikipedia.org/wiki/Brent%27s_method
+    assert g0 * g1 < 0
+    a, b = t0, t1
+    ga, gb = g0, g1
+    xa, xb = x0.copy(), x1.copy()
+    if abs(g0) < abs(g1):
+        a, b = b, a
+        ga, gb = gb, ga
+    c = a
+    mflag = True
+    gc = ga
+    d = 0.0
+    delta = tol ** (1 / 2)  # TODO: find a better way of deciding this
+    while True:
+        print(a, b)
+        if np.abs(ga - gc) < 1e-16 and np.abs(gb - gc) < 1e-16:
+            s = (
+                a * ga * gc / ((ga - gb) * (ga - gc))
+                + b * gb * gc / ((gb - ga) * (gb - gc))
+                + c * ga * gc / ((gc - ga) * (gc - gb))
+            )
+        else:
+            s = b - gb * (b - a) / (gb - ga)
+        if (
+            (not (((3 * a + b) / 4 <= s <= b) or ((3 * a + b) / 4 >= s >= b)))
+            or (mflag and np.abs(s - b) >= np.abs(b - c) / 2)
+            or (not mflag and np.abs(s - b) >= np.abs(c - d) / 2)
+            or (mflag and np.abs(b - c) < np.abs(delta))
+            or (mflag and np.abs(c - d) < np.abs(delta))
+        ):
+            s = (a + b) / 2
+            mflag = True
+        else:
+            mflag = False
+        xs = dop_interp_step(np.array([s]), x0, t0, t1, F)[0]
+        gs = g(s, xs, *args)
+        d = c
+        c = b
+        if ga * gs < 0:
+            b = s
+            xb = xs.copy()
+            gb = gs
+        else:
+            a = s
+            xa = xs.copy()
+            ga = gs
+        if np.abs(ga) < np.abs(gb):
+            a, b = b, a
+            xa, xb = xb.copy(), xa.copy()
+            ga, gb = gb, ga
+
+        if np.abs(gb) < tol or np.abs(gs) < tol or np.abs(b - a) < tol:
+            return s, xs
+
+        # # next value
+        # s = b - gbk * (b - bkm) / den if np.abs(den) < 1e-16 else m
+        # bkp = s if (b <= s <= m) or (m <= s <= b) else m
+
+        # xbkp = dop_interp_step(np.array([bkp]), x0, t0, t1, F)[0]
+
+        # gbkp = g(bkp, xbkp, *args)
+        # if np.sign(ga) == -np.sign(gbkp):
+        #     akp = a
+        # else:
+        #     akp = b
+        # xakp = dop_interp_step(np.array([akp]), x0, t0, t1, F)[0]
+        # gakp = g(akp, xakp, *args)
+        # if np.abs(gakp) < np.abs(gbkp):  # swap
+        #     bkp, xbkp, gbkp = akp, xakp.copy(), gakp
+
+        # bkm = b
+        # gbkm = gbk
+
+        # b = bkp
+        # a = akp
+        # gbk = gbkp
+        # ga = gakp
+        # if np.abs(b - a) < tol or np.abs(gbk) < tol:
+        #     print(bkp)
+        #     return bkp, xbkp
