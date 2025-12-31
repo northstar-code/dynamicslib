@@ -5,7 +5,7 @@ from numba import float64 as nbfloat64
 from numba.typed import List as nbList
 from typing import Tuple, Callable, List
 import dynamicslib.DOP853_coefs as coefs
-from dynamicslib.interpolate import dop_interpolate, interpolate_event
+from dynamicslib.interpolate import dop_interpolate, interp_event
 
 
 # Keeping for later, probably wont use
@@ -124,8 +124,9 @@ def dop853_dense_extra(
     f_fin: NDArray[np.floating],
     K_ext: NDArray,
     n: int,
-    args: tuple = (),
+    args:tuple,
 ) -> NDArray[np.floating]:
+    # print(args)
     """Interpolation for DOP583 requires a couple extra function evaluations. This function does those
 
     Args:
@@ -170,7 +171,8 @@ def dop853(
     atol: float | None = None,
     rtol: float | None = None,
     init_step: float = 1.0,
-    events: List[Callable[..., float]] | None = None,
+    events: Callable[..., float] | None = None,
+    n_events: int = 0,
     directions: List[int] | None = None,
     terminals: List[int] | None = None,
     t_eval: NDArray | None = None,
@@ -206,31 +208,39 @@ def dop853(
         Tuple: [NDArray, NDArray]: (Event times [Ne x (Nevents, )], Event states [Ne x (nx, Nevents)])
     """
 
-    nx = len(x0)
+    # prepare inputs
     if atol is None:
         atol = int_tol
     if rtol is None:
         rtol = int_tol
-    if directions is None and events is not None:
-        directions = [0] * len(events)
-    if terminals is None and events is not None:
-        terminals = [0] * len(events)
 
     if events is not None:
+        assert n_events > 0
         dense_output = True
+        if directions is None:
+            directions = [0] * n_events
+        else:
+            assert len(directions) == n_events
+        if terminals is None:
+            terminals = [0] * n_events
+        else:
+            assert len(terminals) == n_events
+    else:
+        n_events = 0
 
     if t_eval is not None:
         dense_output = True
 
+    # %% Prepare integrator
     halt = False
     forward = t_span[1] > t_span[0]
 
-    # %% Prepare integrator
-    K_ext = np.empty((coefs.N_STAGES_EXTENDED, nx), dtype=np.float64)
-    K = K_ext[: coefs.n_stages + 1]
-
     t0, tf = t_span
     t = t0
+    nx = len(x0)
+
+    K_ext = np.empty((coefs.N_STAGES_EXTENDED, nx), dtype=np.float64)
+    K = K_ext[: coefs.n_stages + 1]
 
     ts = nbList()
     ts.append(t0)
@@ -245,6 +255,7 @@ def dop853(
     F = np.zeros((coefs.INTERPOLATOR_POWER, nx), np.float64)
     if dense_output:
         Fs.append(F)
+        Fs.pop()
 
     # %% prepare events
 
@@ -252,11 +263,11 @@ def dop853(
         t_events = nbList()
         event_vals = nbList()
         x_events = nbList()
-        for event in events:
+        for jj in range(n_events):
             t_events_i = nbList.empty_list(nbfloat64)
             t_events.append(t_events_i)
             event_vals_i = nbList.empty_list(nbfloat64)
-            event_vals_i.append(event(t0, x0, *args))
+            event_vals_i.append(events(jj, t0, x0, args))
             event_vals.append(event_vals_i)
             x_events_i = nbList()
             x_events_i.append(np.zeros((nx,), dtype=np.float64))
@@ -304,14 +315,17 @@ def dop853(
 
         # When the step is accepted
         if error <= 1:
+            tnew = t + h
+
             if dense_output:
+                # print(args)
                 F = dop853_dense_extra(func, h, t, xnew, x, K[-1], K_ext, nx, args)
                 Fs.append(F)
 
             # %% Event handling
             if events is not None:
-                for jj, event in enumerate(events):
-                    g = event(t + h, xnew, *args)
+                for jj in range(n_events):
+                    g = events(jj, tnew, xnew, args)
                     direction = directions[jj]
                     terminal = terminals[jj]
 
@@ -327,18 +341,8 @@ def dop853(
                         and np.sign(ev_vals[-2]) > 0
                         and np.sign(ev_vals[-1]) <= 0
                     ):
-                        te, xe = interpolate_event(
-                            x,
-                            xnew,
-                            t,
-                            t + h,
-                            F,
-                            ev_vals[-2],
-                            ev_vals[-1],
-                            event,
-                            args,
-                            delta=1e-1,
-                        )
+                        g0, g1 = ev_vals[-2], ev_vals[-1]
+                        te, xe = interp_event(x,xnew,t,tnew,F,g0,g1,events,jj,atol,1e-1,args)
                         t_events[jj].append(te)
                         x_events[jj].append(xe)
 
@@ -347,13 +351,15 @@ def dop853(
                         break
 
             # %% step
-            t += h
+            t = tnew
             x = xnew
             ts.append(t)
             xs.append(x)
             fs.append(K[-1])
 
             if halt:
+                # TODO: if we find a halt, recompute the final timestep
+                # and then drop events after the halt (if two events were both bracketed)
                 break
 
         h *= hscale
@@ -375,10 +381,13 @@ def dop853(
             xs_out[:, jj] = xs[jj]
             ts_out[jj] = ts[jj]
 
-
     # convert fs and Fs to arrays
     fs_out = np.empty((len(ts), nx), dtype=np.float64)
-    Fs_out = np.empty((len(ts), coefs.INTERPOLATOR_POWER, nx), dtype=np.float64) if dense_output else None
+    Fs_out = (
+        np.empty((len(ts), coefs.INTERPOLATOR_POWER, nx), dtype=np.float64)
+        if dense_output
+        else None
+    )
     for jj in range(len(ts)):
         fs_out[jj] = fs[jj]
     if dense_output:
@@ -388,7 +397,7 @@ def dop853(
     if events is not None:
         te_out = []
         xe_out = []
-        for jj in range(len(events)):
+        for jj in range(n_events):
             ne = len(t_events[jj])
             te = np.empty((ne,), np.float64)
             xe = np.empty((ne, nx), np.float64)
@@ -402,3 +411,47 @@ def dop853(
         xe_out = None
 
     return (ts_out, xs_out, (fs_out, Fs_out), (te_out, xe_out))
+
+
+def dispatch_events(*events):
+    MAX_EVENTS = 10
+
+    # strng = ", ".join([f"g{j}" for j in range(MAX_EVENTS)])
+    # strng+=" = (events + (nothing,) * MAX_EVENTS)[:MAX_EVENTS]"
+    # print(strng)
+
+    # dispatcher_lines = ["@njit", "def dispatcher(i, t, x, *args):"]
+    # for idx in range(MAX_EVENTS):
+    #     dispatcher_lines.append(f"    if i == {idx}: return g{idx}(t, x, *args)")
+    # dispatcher_lines.append("    return 0.0")
+    # print("\n".join(dispatcher_lines))
+    
+    events = tuple(events)
+    assert len(events) <= MAX_EVENTS
+    
+    @njit
+    def nothing(t, x, *args):
+        return np.inf
+    
+    #fmt: off
+    g0, g1, g2, g3, g4, g5, g6, g7, g8, g9 = (events + (nothing,) * MAX_EVENTS)[:MAX_EVENTS]
+    #fmt: on
+    
+    # print(g0(0., np.array([1., 2., 3., 4.]), *args))
+
+    @njit
+    def dispatcher(i, t, x, args):
+        #fmt: off
+            if i == 0: return g0(t, x, *args)
+            if i == 1: return g1(t, x, *args)
+            if i == 2: return g2(t, x, *args)
+            if i == 3: return g3(t, x, *args)
+            if i == 4: return g4(t, x, *args)
+            if i == 5: return g5(t, x, *args)
+            if i == 6: return g6(t, x, *args)
+            if i == 7: return g7(t, x, *args)
+            if i == 8: return g8(t, x, *args)
+            if i == 9: return g9(t, x, *args)
+        #fmt: on
+
+    return dispatcher

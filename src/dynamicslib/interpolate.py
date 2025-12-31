@@ -198,7 +198,7 @@ def dop_interpolate(
 
 
 @njit(cache=True)
-def interpolate_event(
+def interp_event(
     x0: NDArray[np.floating],
     x1: NDArray[np.floating],
     t0: float,
@@ -207,9 +207,10 @@ def interpolate_event(
     g0: float,
     g1: float,
     g: Callable[..., float],
-    args: Tuple = (),
+    event_index: int,
     tol: float = 1e-12,
     delta: float = 1e-10,
+    args:tuple=(),
 ):
     # Decker's (secant) method: https://en.wikipedia.org/wiki/Brent%27s_method
     assert g0 * g1 < 0
@@ -246,7 +247,7 @@ def interpolate_event(
 
         xs = dop_interp_step(np.array([s]), x0, t0, t1, F)[0]
 
-        gs = g(s, xs, *args)
+        gs = g(event_index, s, xs, args)
         d = c
         c = b
         if ga * gs < 0:
