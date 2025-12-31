@@ -88,12 +88,7 @@ class JC_fixed_spatial_perpendicular(Targetter):
         period = self.get_period(X)
         xstmIC = np.array([*x0, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, period / 2),
-            xstmIC,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
+            coupled_stm_eom, (0.0, period / 2), xstmIC, self.int_tol, args=(self.mu,)
         )
         xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         xf = np.array(xf)
@@ -144,12 +139,7 @@ class spatial_perpendicular(Targetter):
         period = self.get_period(X)
         xstmIC = np.array([*x0, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, period / 2),
-            xstmIC,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
+            coupled_stm_eom, (0.0, period / 2), xstmIC, self.int_tol, args=(self.mu,)
         )
         xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         xf = np.array(xf)
@@ -211,12 +201,7 @@ class fullstate_minus_one(Targetter):
         period = self.get_period(X)
         xstmIC = np.array([*x0, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, period),
-            xstmIC,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
+            coupled_stm_eom, (0.0, period), xstmIC, self.int_tol, args=(self.mu,)
         )
         xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         xf = np.array(xf)
@@ -259,12 +244,7 @@ class axial(Targetter):
         period = self.get_period(X)
         xstmIC = np.array([*x0, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, period / 2),
-            xstmIC,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
+            coupled_stm_eom, (0.0, period / 2), xstmIC, self.int_tol, args=(self.mu,)
         )
         xf, stm_half = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         xf = np.array(xf)
@@ -306,12 +286,7 @@ class xy_symmetric(Targetter):
         period = self.get_period(X)
         xstmIC = np.array([*x0, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, period / 2),
-            xstmIC,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
+            coupled_stm_eom, (0.0, period / 2), xstmIC, self.int_tol, args=(self.mu,)
         )
         xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         xf = np.array(xf)
@@ -355,12 +330,7 @@ class spatial_period_fixed(Targetter):
         period = self.period
         xstmIC = np.array([*x0, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, period / 2),
-            xstmIC,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
+            coupled_stm_eom, (0.0, period / 2), xstmIC, self.int_tol, args=(self.mu,)
         )
         xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         xf = np.array(xf)
@@ -410,12 +380,7 @@ class period_fixed_spatial_perpendicular(Targetter):
         x0 = self.get_x0(X)
         xstmIC = np.array([*x0, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, period / 2),
-            xstmIC,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
+            coupled_stm_eom, (0.0, period / 2), xstmIC, self.int_tol, args=(self.mu,)
         )
         xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         xf = np.array(xf)
@@ -464,12 +429,7 @@ class planar_perpendicular(Targetter):
         period = self.get_period(X)
         xstmIC = np.array([*x0, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, period / 2),
-            xstmIC,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
+            coupled_stm_eom, (0.0, period / 2), xstmIC, self.int_tol, args=(self.mu,)
         )
         xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         xf = np.array(xf)
@@ -511,14 +471,8 @@ class multi_shooter(Targetter):
 
     def get_X(self, x0: NDArray, period: float):
         # Propagate with arbitrary timesteps
-        ts, xs, _, Fs = dop853(
-            eom,
-            (0.0, period),
-            x0,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
-            dense_output=True,
+        ts, xs, (_, Fs), _ = dop853(
+            eom, (0.0, period), x0, self.int_tol, args=(self.mu,), dense_output=True
         )
         # ensure that num timesteps is divisible by num segments
         xe, te = dop_interpolate(ts, xs.T, Fs, n_mult=self.nseg)
@@ -616,12 +570,7 @@ class multi_shooter(Targetter):
         for x0, tf in zip(x0s, tfs):
             sv0 = np.array([*x0, *np.eye(6).flatten()])
             ts, ys, _, _ = dop853(
-                coupled_stm_eom,
-                (0.0, tf),
-                sv0,
-                self.int_tol,
-                self.int_tol,
-                args=(self.mu,),
+                coupled_stm_eom, (0.0, tf), sv0, self.int_tol, args=(self.mu,)
             )
             xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
             xf = np.array(xf)
@@ -641,14 +590,7 @@ def propagate_X(
     x0 = targetter.get_x0(X)
     period = targetter.get_period(X)
     tf = period * fraction
-    ts, ys, _, _ = dop853(
-        eom,
-        (0.0, tf),
-        x0,
-        int_tol,
-        int_tol,
-        args=(targetter.mu,),
-    )
+    ts, ys, _, _ = dop853(eom, (0.0, tf), x0, int_tol, args=(targetter.mu,))
     xf = ys[:, -1]
     return targetter.get_X(xf, period)
 
@@ -791,12 +733,7 @@ class heterclinic:
         tf_u = self.get_tf_u(X)
         sv0 = np.array([*x0_s, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, tf_s),
-            sv0,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
+            coupled_stm_eom, (0.0, tf_s), sv0, self.int_tol, args=(self.mu,)
         )
         xf_s, stm_s = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         eomf_s = eom(tf_s, xf_s, self.mu)
@@ -804,12 +741,7 @@ class heterclinic:
 
         sv0 = np.array([*x0_u, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, tf_u),
-            sv0,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
+            coupled_stm_eom, (0.0, tf_u), sv0, self.int_tol, args=(self.mu,)
         )
         xf_u, stm_u = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         eomf_u = eom(tf_u, xf_u, self.mu)
@@ -896,12 +828,7 @@ class heterclinic_mod:
         # print(x0_s)
         sv0 = np.array([*x0_s, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, tf_s),
-            sv0,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
+            coupled_stm_eom, (0.0, tf_s), sv0, self.int_tol, args=(self.mu,)
         )
         xf_s, stm_s = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         eomf_s = eom(tf_s, xf_s, self.mu)
@@ -909,12 +836,7 @@ class heterclinic_mod:
 
         sv0 = np.array([*x0_u, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, tf_u),
-            sv0,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
+            coupled_stm_eom, (0.0, tf_u), sv0, self.int_tol, args=(self.mu,)
         )
         xf_u, stm_u = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         eomf_u = eom(tf_u, xf_u, self.mu)
@@ -992,12 +914,7 @@ class manifold_reduced_dim:
         tf_u = self.get_tf_u(X)
         sv0 = np.array([*x0_s, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, tf_s),
-            sv0,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
+            coupled_stm_eom, (0.0, tf_s), sv0, self.int_tol, args=(self.mu,)
         )
         xf_s, stm_s = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         eomf_s = eom(tf_s, xf_s, self.mu)
@@ -1005,12 +922,7 @@ class manifold_reduced_dim:
 
         sv0 = np.array([*x0_u, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, tf_u),
-            sv0,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
+            coupled_stm_eom, (0.0, tf_u), sv0, self.int_tol, args=(self.mu,)
         )
         xf_u, stm_u = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         eomf_u = eom(tf_u, xf_u, self.mu)
@@ -1088,12 +1000,7 @@ class manifold_higher_dim:
         tf_u = self.get_tf_u(X)
         sv0 = np.array([*x0_s, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, tf_s),
-            sv0,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
+            coupled_stm_eom, (0.0, tf_s), sv0, self.int_tol, args=(self.mu,)
         )
         xf_s, stm_s = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         eomf_s = eom(tf_s, xf_s, self.mu)
@@ -1101,12 +1008,7 @@ class manifold_higher_dim:
 
         sv0 = np.array([*x0_u, *np.eye(6).flatten()])
         ts, ys, _, _ = dop853(
-            coupled_stm_eom,
-            (0.0, tf_u),
-            sv0,
-            self.int_tol,
-            self.int_tol,
-            args=(self.mu,),
+            coupled_stm_eom, (0.0, tf_u), sv0, self.int_tol, args=(self.mu,)
         )
         xf_u, stm_u = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         eomf_u = eom(tf_u, xf_u, self.mu)

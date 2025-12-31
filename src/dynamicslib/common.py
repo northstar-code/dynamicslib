@@ -160,7 +160,11 @@ def prop_ic_fullstate(
     density_mult: int = 2,
 ):
     x0, tf = X2xtf_func(X)
-    ts, xs1, _, Fs = dop853(
+    (
+        ts,
+        xs1,
+        (_, Fs),
+    ) = dop853(
         eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,), dense_output=True
     )
     ts, xs = dop_interpolate(ts, xs1.T, Fs, n_mult=density_mult)
@@ -175,8 +179,8 @@ def prop(
     density_mult: int | None = 2,
 ):
     dense = True if density_mult is not None and density_mult > 1 else False
-    ts, xs1, _, Fs = dop853(
-        eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,), dense_output=dense
+    ts, xs1, (_, Fs), _ = dop853(
+        eom, (0, tf), x0, int_tol, args=(mu,), dense_output=dense
     )
     if dense:
         ts, xs = dop_interpolate(ts, xs1.T, Fs, n_mult=density_mult)
