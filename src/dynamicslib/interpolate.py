@@ -194,10 +194,10 @@ def dop_interpolate(
             newterms = dop_interp_step(ts_interval, x0, t0, t1, Fs_interval)
             x_eval = np.concatenate((x_eval, newterms))
 
-    return t_eval, x_eval.T  # , tlst
+    return t_eval, x_eval.T
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def interpolate_event(
     x0: NDArray[np.floating],
     x1: NDArray[np.floating],
@@ -209,6 +209,7 @@ def interpolate_event(
     g: Callable[..., float],
     args: Tuple = (),
     tol: float = 1e-12,
+    delta: float = 1e-10,
 ):
     # Decker's (secant) method: https://en.wikipedia.org/wiki/Brent%27s_method
     assert g0 * g1 < 0
@@ -222,9 +223,7 @@ def interpolate_event(
     mflag = True
     gc = ga
     d = 0.0
-    delta = tol ** (1 / 2)  # TODO: find a better way of deciding this
     while True:
-        print(a, b)
         if np.abs(ga - gc) < 1e-16 and np.abs(gb - gc) < 1e-16:
             s = (
                 a * ga * gc / ((ga - gb) * (ga - gc))
@@ -244,7 +243,9 @@ def interpolate_event(
             mflag = True
         else:
             mflag = False
+
         xs = dop_interp_step(np.array([s]), x0, t0, t1, F)[0]
+
         gs = g(s, xs, *args)
         d = c
         c = b
@@ -263,30 +264,5 @@ def interpolate_event(
 
         if np.abs(gb) < tol or np.abs(gs) < tol or np.abs(b - a) < tol:
             return s, xs
-
-        # # next value
-        # s = b - gbk * (b - bkm) / den if np.abs(den) < 1e-16 else m
-        # bkp = s if (b <= s <= m) or (m <= s <= b) else m
-
-        # xbkp = dop_interp_step(np.array([bkp]), x0, t0, t1, F)[0]
-
-        # gbkp = g(bkp, xbkp, *args)
-        # if np.sign(ga) == -np.sign(gbkp):
-        #     akp = a
         # else:
-        #     akp = b
-        # xakp = dop_interp_step(np.array([akp]), x0, t0, t1, F)[0]
-        # gakp = g(akp, xakp, *args)
-        # if np.abs(gakp) < np.abs(gbkp):  # swap
-        #     bkp, xbkp, gbkp = akp, xakp.copy(), gakp
-
-        # bkm = b
-        # gbkm = gbk
-
-        # b = bkp
-        # a = akp
-        # gbk = gbkp
-        # ga = gakp
-        # if np.abs(b - a) < tol or np.abs(gbk) < tol:
-        #     print(bkp)
-        #     return bkp, xbkp
+        #     return 0.0, np.array([0.0, 0.0])

@@ -1,6 +1,8 @@
 from numba import njit
 from numpy.typing import NDArray
 import numpy as np
+from numba import float64 as nbfloat64
+from numba.typed import List as nbList
 from typing import Tuple, Callable, List
 import dynamicslib.DOP853_coefs as coefs
 from dynamicslib.interpolate import dop_interpolate, interpolate_event
@@ -159,140 +161,42 @@ def dop853_dense_extra(
     return F
 
 
+@njit(cache=True)
 def dop853(
-    func: Callable,
-    t_span: Tuple[float, float],
-    x0: NDArray,
-    atol: float = 1e-10,
-    rtol: float = 1e-10,
-    init_step: float = 1.0,
-    args: Tuple = (),
-    t_eval: NDArray | None = None,
-    dense_output: bool = False,
-) -> Tuple[
-    NDArray[np.floating],
-    NDArray[np.floating],
-    NDArray[np.floating] | None,
-    NDArray[np.floating] | None,
-]:
-    """High order adaptive RK method
-
-    Args:
-        func (Callable): dynamics function
-        t_span (Tuple[float, float]): beginning and end times
-        x0 (NDArray): initial state
-        atol (float, optional): absolute tolerence. Defaults to 1e-10.
-        rtol (float, optional): rel tolerence. Defaults to 1e-10.
-        init_step (float, optional): initial step size. Defaults to 1.0.
-        t_eval (NDArray | None, optional): times to evaluate at. Will interpolate if these are specified. If None, returns only what's evaluated by the RK solver. Defaults to None
-        args (Tuple, optional): additional args to func(t, x, *args). Defaults to ().
-
-    Returns:
-        Tuple[NDArray, NDArray, NDArray, NDArray]: ts (N, ), xs (nx, N), EOM function evals (Nx, N), intermediate evaluations (Nt-1, 7, Nx)
-    """
-
-    if t_eval is not None:
-        dense_output = True
-
-    n = len(x0)
-
-    K_ext = np.empty((coefs.N_STAGES_EXTENDED, n), dtype=np.float64)
-    K = K_ext[: coefs.n_stages + 1]
-
-    forward = t_span[1] > t_span[0]
-    t0, tf = t_span
-    t = t0
-    xs = np.expand_dims(x0, axis=0)
-    fs = np.expand_dims(func(t0, x0, *args), axis=0)
-    if dense_output:
-        Fs = np.zeros((0, coefs.INTERPOLATOR_POWER, n), np.float64)
-    else:
-        Fs = None
-
-    ts = np.array([t0], dtype=np.float64)
-    x = x0.copy()
-    h = abs(init_step) if forward else -abs(init_step)
-
-    # pp180 of RKEM
-    while (t < tf) if forward else (t > tf):
-        if (t + h > tf) if forward else (t + h < tf):
-            h = tf - t
-
-        # STEP
-        K[0] = func(t, x, *args)
-        for sm1 in range(coefs.N_STAGES - 1):
-            s = sm1 + 1
-            a = coefs.A[s]
-            c = coefs.C[s]
-            dy = np.dot(K[:s].T, a[:s]) * h
-            K[s] = func(t + c * h, x + dy, *args)
-
-        xnew = x + h * np.dot(K[:-1].T, coefs.B)
-
-        K[-1] = func(t + h, xnew, *args)
-
-        # END STEP
-
-        # error estimator:
-        scale = atol + np.maximum(np.abs(x), np.abs(xnew)) * rtol
-        err5 = np.dot(K.T, coefs.E5) / scale
-        err3 = np.dot(K.T, coefs.E3) / scale
-        err5_norm_2 = np.linalg.norm(err5) ** 2
-        err3_norm_2 = np.linalg.norm(err3) ** 2
-        denom = err5_norm_2 + 0.01 * err3_norm_2
-        error = np.abs(h) * err5_norm_2 / np.sqrt(denom * len(scale))
-        # END ERROR ESTIMDATOR
-
-        hscale = 0.9 * error ** (-1 / 8) if error != 0 else 2
-
-        # When the step is accepted
-        if error <= 1:
-            if dense_output:
-                F = dop853_dense_extra(func, h, t, xnew, x, K[-1], K_ext, n, args)
-                Fs = np.concatenate((Fs, np.expand_dims(F, axis=0)))
-            t += h
-            x = xnew
-            ts = np.concatenate((ts, np.array([t], dtype=np.float64)))
-            xs = np.concatenate((xs, np.expand_dims(x, axis=0)))
-            fs = np.concatenate((fs, np.expand_dims(K[-1], axis=0)))
-
-        h *= hscale
-
-    if t_eval is not None:
-        _, xs = dop_interpolate(ts, xs, Fs, t_eval)
-        ts = t_eval
-        return ts, xs.T, None, None
-
-    return ts, xs.T, fs.T, Fs
-
-
-def dop853_events_support(
     func: Callable[..., NDArray],
     t_span: Tuple[float, float],
     x0: NDArray,
-    atol: float = 1e-10,
-    rtol: float = 1e-10,
+    int_tol: float = 1e-12,
+    atol: float | None = None,
+    rtol: float | None = None,
     init_step: float = 1.0,
-    args: Tuple = (),
+    events: List[Callable[..., float]] = [],
+    directions: List[int] | None = None,
+    terminals: List[int] | None = None,
     t_eval: NDArray | None = None,
     dense_output: bool = False,
-    events: List[Callable[..., float]] = [],
+    args: Tuple = (),
 ) -> Tuple[
     NDArray[np.floating],
     NDArray[np.floating],
-    Tuple[NDArray[np.floating] | None, NDArray[np.floating] | None],
-    Tuple[NDArray[np.floating] | None, NDArray[np.floating] | None],
+    Tuple[NDArray[np.floating], NDArray[np.floating]],
+    Tuple[List, List],
 ]:
-    """High order adaptive RK method
+    """High order adaptive RK method with interpolation and events location capability.
 
     Args:
         func (Callable): dynamics function
         t_span (Tuple[float, float]): beginning and end times
         x0 (NDArray): initial state
-        atol (float, optional): absolute tolerence. Defaults to 1e-10.
-        rtol (float, optional): rel tolerence. Defaults to 1e-10.
+        int_tol (float, optional): Absolute and relative tolerance (will be assigned to both). Defaults to 1e-12
+        atol (float | None, optional): absolute tolerence. Defaults to None. If not None, will override int_tol
+        rtol (float | None, optional): rel tolerence. Defaults to None. If not None, will override int_tol
         init_step (float, optional): initial step size. Defaults to 1.0.
-        t_eval (NDArray | None, optional): times to evaluate at. Will interpolate if these are specified. If None, returns only what's evaluated by the RK solver. Defaults to None
+        events (List[Callable]): List of ODE events functions. Each function has signature g(t, x, *args) with the same args as f, and returns a float
+        directions (List | None): ODE event directions. 1 means only trigger when event is increasing, -1 only triggers when decreasing, 0 triggers on both. If the whole list is None, then all events are assigned direction 0
+        terminals (List | None): ODE event terminal counts. Integration will halt at the the termination count specified. 0 means non-terminal event.
+        t_eval (NDArray | None, optional): times to evaluate at. Will interpolate if these are specified. If None, returns only what's evaluated by the RK solver. Defaults to None, meaning all events are non-terminal
+        dense_output (bool, optional): whether to collect interpolators. Doing so slightly increases computation time, so do not do if not necessary. If t_eval is provided or events are non-empty, then this is set to True
         args (Tuple, optional): additional args to func(t, x, *args). Defaults to ().
 
     Returns:
@@ -303,41 +207,62 @@ def dop853_events_support(
     """
 
     nx = len(x0)
+    if atol is None:
+        atol = int_tol
+    if rtol is None:
+        rtol = int_tol
+    if directions is None:
+        directions = [0] * len(events)
+    if terminals is None:
+        terminals = [0] * len(events)
 
-    # Prepare events
-    # useev = len(events) > 0
-    for function in events:
-        if not hasattr(function, "terminal"):
-            function.terminal = 0
-        elif function.terminal < 0:
-            function.terminal = 0
-        if not hasattr(function, "direction"):
-            function.direction = 0
     if len(events):
         dense_output = True
 
     if t_eval is not None:
         dense_output = True
 
-    # Prepare interpolator
+    halt = False
+    forward = t_span[1] > t_span[0]
+
+    # %% Prepare integrator
     K_ext = np.empty((coefs.N_STAGES_EXTENDED, nx), dtype=np.float64)
     K = K_ext[: coefs.n_stages + 1]
 
-    forward = t_span[1] > t_span[0]
     t0, tf = t_span
     t = t0
-    xs = np.expand_dims(x0, axis=0)
-    fs = np.expand_dims(func(t0, x0, *args), axis=0)
+
+    ts = nbList()
+    ts.append(t0)
+
+    xs = nbList()
+    xs.append(x0)
+
+    fs = nbList()
+    fs.append(func(t0, x0, *args))
+
+    Fs = nbList()
+    F = np.zeros((coefs.INTERPOLATOR_POWER, nx), np.float64)
     if dense_output:
-        Fs = np.zeros((0, coefs.INTERPOLATOR_POWER, nx), np.float64)
-    else:
-        Fs = None
+        Fs.append(F)
 
-    t_events = [np.empty((0,), dtype=np.float64) for _ in events]
-    event_vals = [np.array([g(t0, x0, *args)]) for g in events]
-    x_events = [np.empty((0, nx), dtype=np.float64) for _ in events]
+    # %% prepare events
+    t_events = nbList()
+    event_vals = nbList()
+    x_events = nbList()
 
-    ts = np.array([t0], dtype=np.float64)
+    for event in events:
+        t_events_i = nbList.empty_list(nbfloat64)
+        t_events.append(t_events_i)
+        event_vals_i = nbList.empty_list(nbfloat64)
+        event_vals_i.append(event(t0, x0, *args))
+        event_vals.append(event_vals_i)
+        x_events_i = nbList()
+        x_events_i.append(np.zeros((nx,), dtype=np.float64))
+        x_events_i.pop()
+        x_events.append(x_events_i)
+
+    # %% initialize
     x = x0.copy()
     h = abs(init_step) if forward else -abs(init_step)
 
@@ -345,7 +270,8 @@ def dop853_events_support(
         if (t + h > tf) if forward else (t + h < tf):
             h = tf - t
 
-        # STEP, syntax taken from Scipy implementation
+        # syntax taken from Scipy implementation
+        # %% take step
         K[0] = func(t, x, *args)
         for sm1 in range(coefs.N_STAGES - 1):
             s = sm1 + 1
@@ -358,9 +284,7 @@ def dop853_events_support(
 
         K[-1] = func(t + h, xnew, *args)
 
-        # END STEP
-
-        # error estimator:
+        # %% error estimator:
         scale = atol + np.maximum(np.abs(x), np.abs(xnew)) * rtol
         err5 = np.dot(K.T, coefs.E5) / scale
         err3 = np.dot(K.T, coefs.E3) / scale
@@ -370,60 +294,99 @@ def dop853_events_support(
         error = np.abs(h) * err5_norm_2 / np.sqrt(denom * len(scale))
         # END ERROR ESTIMDATOR
 
+        # %% accept step
         hscale = 0.9 * error ** (-1 / 8) if error != 0 else 2
 
         # When the step is accepted
         if error <= 1:
             if dense_output:
                 F = dop853_dense_extra(func, h, t, xnew, x, K[-1], K_ext, nx, args)
-                Fs = np.concatenate((Fs, np.expand_dims(F, axis=0)))
+                Fs.append(F)
 
-            # Event handling
-            halt = False
+            # %% Event handling
             for jj, event in enumerate(events):
                 g = event(t + h, xnew, *args)
-                event_vals[jj] = np.concatenate(
-                    (event_vals[jj], np.array([g], dtype=np.float64))
-                )
+                direction = directions[jj]
+                terminal = terminals[jj]
+
+                event_vals[jj].append(g)
                 ev_vals = event_vals[jj]
                 # handle event direction here
                 if (
-                    event.direction in [0, 1]
+                    direction in [0, 1]
                     and np.sign(ev_vals[-2]) < 0
                     and np.sign(ev_vals[-1]) >= 0
                 ) or (
-                    event.direction in [-1, 0]
+                    direction in [-1, 0]
                     and np.sign(ev_vals[-2]) > 0
                     and np.sign(ev_vals[-1]) <= 0
                 ):
                     te, xe = interpolate_event(
-                        x, xnew, t, t + h, F, ev_vals[-2], ev_vals[-1], event, args
+                        x,
+                        xnew,
+                        t,
+                        t + h,
+                        F,
+                        ev_vals[-2],
+                        ev_vals[-1],
+                        event,
+                        args,
+                        delta=1e-1,
                     )
-                    t_events[jj] = np.concatenate(
-                        (t_events[jj], np.array([te], dtype=np.float64))
-                    )
-                    x_events[jj] = np.concatenate(
-                        (x_events[jj], np.expand_dims(xe, axis=0))
-                    )
+                    t_events[jj].append(te)
+                    x_events[jj].append(xe)
 
-                if len(t_events[jj]) == event.terminal and event.terminal > 0:
+                if len(t_events[jj]) == terminal and terminal > 0:
                     halt = True
 
+            # %% step
             t += h
             x = xnew
-            ts = np.concatenate((ts, np.array([t], dtype=np.float64)))
-            xs = np.concatenate((xs, np.expand_dims(x, axis=0)))
-            fs = np.concatenate((fs, np.expand_dims(K[-1], axis=0)))
+
+            ts.append(t)
+            xs.append(x)
+            fs.append(K[-1])
+
             if halt:
                 break
 
         h *= hscale
 
-    x_events = [xe.T for xe in x_events]
-
+    # %% end, interpolate
     if t_eval is not None:
-        _, xs = dop_interpolate(ts, xs, Fs, t_eval)
-        ts = t_eval
-        return ts, xs.T, (None, None), (t_events, x_events)
+        if halt:  # Get rid of excess t_eval
+            if forward and t_eval[-1] > t:
+                t_eval = np.append(t_eval[t_eval <= t], t)
+            elif not forward and t_eval[-1] <= t:
+                t_eval = np.append(t_eval[t_eval <= t], t)
+        _, xs_out = dop_interpolate(ts, xs, Fs, t_eval)
+        ts_out = t_eval
+    else:  # convert ts and xs to arrays
+        nt = len(ts)
+        ts_out = np.empty((nt), dtype=np.float64)
+        xs_out = np.empty((nx, nt), dtype=np.float64)
+        for jj in range(nt):
+            xs_out[:, jj] = xs[jj]
+            ts_out[jj] = ts[jj]
 
-    return ts, xs.T, (fs.T, Fs), (t_events, x_events)
+    # convert fs and Fs to arrays
+    fs_out = np.empty((len(ts), nx), dtype=np.float64)
+    Fs_out = np.empty((len(ts), coefs.INTERPOLATOR_POWER, nx), dtype=np.float64)
+    for jj in range(len(ts)):
+        fs_out[jj] = fs[jj]
+    for jj in range(len(ts) - 1):
+        Fs_out[jj] = Fs[jj]
+
+    te_out = []
+    xe_out = []
+    for jj in range(len(events)):
+        ne = len(t_events[jj])
+        te = np.empty((ne,), np.float64)
+        xe = np.empty((ne, nx), np.float64)
+        for kk in range(ne):
+            te[kk] = t_events[jj][kk]
+            xe[kk] = x_events[jj][kk]
+        te_out.append(te)
+        xe_out.append(xe)
+
+    return (ts_out, xs_out, (fs_out, Fs_out), (te_out, xe_out))
