@@ -165,7 +165,7 @@ def prop_ic_fullstate(
         xs1,
         (_, Fs),
     ) = dop853(
-        eom, (0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,), dense_output=True
+        eom, (0.0, tf), x0, rtol=int_tol, atol=int_tol, args=(mu,), dense_output=True
     )
     ts, xs = dop_interpolate(ts, xs1.T, Fs, n_mult=density_mult)
     return xs
@@ -180,7 +180,7 @@ def prop(
 ):
     dense = True if density_mult is not None and density_mult > 1 else False
     ts, xs1, (_, Fs), _ = dop853(
-        eom, (0, tf), x0, int_tol, args=(mu,), dense_output=dense
+        eom, (0.0, tf), x0, int_tol, args=(mu,), dense_output=dense
     )
     if dense:
         ts, xs = dop_interpolate(ts, xs1.T, Fs, n_mult=density_mult)
@@ -368,7 +368,7 @@ def f_df_CR3_single_DEPRICATED(
     )
     xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
     xf = np.array(xf)
-    eomf = eom(0, xf, mu)
+    eomf = eom(0.0, xf, mu)
 
     dF = dF_func(eomf, stm)
     f = f_func(x0, tf, xf)

@@ -170,7 +170,7 @@ def dop853(
     atol: float | None = None,
     rtol: float | None = None,
     init_step: float = 1.0,
-    events: List[Callable[..., float]] = [],
+    events: List[Callable[..., float]] | None = None,
     directions: List[int] | None = None,
     terminals: List[int] | None = None,
     t_eval: NDArray | None = None,
@@ -180,7 +180,7 @@ def dop853(
     NDArray[np.floating],
     NDArray[np.floating],
     Tuple[NDArray[np.floating], NDArray[np.floating]],
-    Tuple[List, List],
+    Tuple[List | None, List | None],
 ]:
     """High order adaptive RK method with interpolation and events location capability.
 
@@ -192,7 +192,7 @@ def dop853(
         atol (float | None, optional): absolute tolerence. Defaults to None. If not None, will override int_tol
         rtol (float | None, optional): rel tolerence. Defaults to None. If not None, will override int_tol
         init_step (float, optional): initial step size. Defaults to 1.0.
-        events (List[Callable]): List of ODE events functions. Each function has signature g(t, x, *args) with the same args as f, and returns a float
+        events (List[Callable] | None): List of ODE events functions. If None, no events. Each function has signature g(t, x, *args) with the same args as f, and returns a float. Defaults to None
         directions (List | None): ODE event directions. 1 means only trigger when event is increasing, -1 only triggers when decreasing, 0 triggers on both. If the whole list is None, then all events are assigned direction 0
         terminals (List | None): ODE event terminal counts. Integration will halt at the the termination count specified. 0 means non-terminal event.
         t_eval (NDArray | None, optional): times to evaluate at. Will interpolate if these are specified. If None, returns only what's evaluated by the RK solver. Defaults to None, meaning all events are non-terminal
@@ -211,12 +211,12 @@ def dop853(
         atol = int_tol
     if rtol is None:
         rtol = int_tol
-    if directions is None:
+    if directions is None and events is not None:
         directions = [0] * len(events)
-    if terminals is None:
+    if terminals is None and events is not None:
         terminals = [0] * len(events)
 
-    if len(events):
+    if events is not None:
         dense_output = True
 
     if t_eval is not None:
@@ -247,20 +247,25 @@ def dop853(
         Fs.append(F)
 
     # %% prepare events
-    t_events = nbList()
-    event_vals = nbList()
-    x_events = nbList()
 
-    for event in events:
-        t_events_i = nbList.empty_list(nbfloat64)
-        t_events.append(t_events_i)
-        event_vals_i = nbList.empty_list(nbfloat64)
-        event_vals_i.append(event(t0, x0, *args))
-        event_vals.append(event_vals_i)
-        x_events_i = nbList()
-        x_events_i.append(np.zeros((nx,), dtype=np.float64))
-        x_events_i.pop()
-        x_events.append(x_events_i)
+    if events is not None:
+        t_events = nbList()
+        event_vals = nbList()
+        x_events = nbList()
+        for event in events:
+            t_events_i = nbList.empty_list(nbfloat64)
+            t_events.append(t_events_i)
+            event_vals_i = nbList.empty_list(nbfloat64)
+            event_vals_i.append(event(t0, x0, *args))
+            event_vals.append(event_vals_i)
+            x_events_i = nbList()
+            x_events_i.append(np.zeros((nx,), dtype=np.float64))
+            x_events_i.pop()
+            x_events.append(x_events_i)
+    else:
+        t_events = None
+        event_vals = None
+        x_events = None
 
     # %% initialize
     x = x0.copy()
@@ -304,45 +309,46 @@ def dop853(
                 Fs.append(F)
 
             # %% Event handling
-            for jj, event in enumerate(events):
-                g = event(t + h, xnew, *args)
-                direction = directions[jj]
-                terminal = terminals[jj]
+            if events is not None:
+                for jj, event in enumerate(events):
+                    g = event(t + h, xnew, *args)
+                    direction = directions[jj]
+                    terminal = terminals[jj]
 
-                event_vals[jj].append(g)
-                ev_vals = event_vals[jj]
-                # handle event direction here
-                if (
-                    direction in [0, 1]
-                    and np.sign(ev_vals[-2]) < 0
-                    and np.sign(ev_vals[-1]) >= 0
-                ) or (
-                    direction in [-1, 0]
-                    and np.sign(ev_vals[-2]) > 0
-                    and np.sign(ev_vals[-1]) <= 0
-                ):
-                    te, xe = interpolate_event(
-                        x,
-                        xnew,
-                        t,
-                        t + h,
-                        F,
-                        ev_vals[-2],
-                        ev_vals[-1],
-                        event,
-                        args,
-                        delta=1e-1,
-                    )
-                    t_events[jj].append(te)
-                    x_events[jj].append(xe)
+                    event_vals[jj].append(g)
+                    ev_vals = event_vals[jj]
+                    # handle event direction here
+                    if (
+                        direction in [0, 1]
+                        and np.sign(ev_vals[-2]) < 0
+                        and np.sign(ev_vals[-1]) >= 0
+                    ) or (
+                        direction in [-1, 0]
+                        and np.sign(ev_vals[-2]) > 0
+                        and np.sign(ev_vals[-1]) <= 0
+                    ):
+                        te, xe = interpolate_event(
+                            x,
+                            xnew,
+                            t,
+                            t + h,
+                            F,
+                            ev_vals[-2],
+                            ev_vals[-1],
+                            event,
+                            args,
+                            delta=1e-1,
+                        )
+                        t_events[jj].append(te)
+                        x_events[jj].append(xe)
 
-                if len(t_events[jj]) == terminal and terminal > 0:
-                    halt = True
+                    if len(t_events[jj]) == terminal and terminal > 0:
+                        halt = True
+                        break
 
             # %% step
             t += h
             x = xnew
-
             ts.append(t)
             xs.append(x)
             fs.append(K[-1])
@@ -369,24 +375,30 @@ def dop853(
             xs_out[:, jj] = xs[jj]
             ts_out[jj] = ts[jj]
 
+
     # convert fs and Fs to arrays
     fs_out = np.empty((len(ts), nx), dtype=np.float64)
-    Fs_out = np.empty((len(ts), coefs.INTERPOLATOR_POWER, nx), dtype=np.float64)
+    Fs_out = np.empty((len(ts), coefs.INTERPOLATOR_POWER, nx), dtype=np.float64) if dense_output else None
     for jj in range(len(ts)):
         fs_out[jj] = fs[jj]
-    for jj in range(len(ts) - 1):
-        Fs_out[jj] = Fs[jj]
+    if dense_output:
+        for jj in range(len(ts) - 1):
+            Fs_out[jj] = Fs[jj]
 
-    te_out = []
-    xe_out = []
-    for jj in range(len(events)):
-        ne = len(t_events[jj])
-        te = np.empty((ne,), np.float64)
-        xe = np.empty((ne, nx), np.float64)
-        for kk in range(ne):
-            te[kk] = t_events[jj][kk]
-            xe[kk] = x_events[jj][kk]
-        te_out.append(te)
-        xe_out.append(xe)
+    if events is not None:
+        te_out = []
+        xe_out = []
+        for jj in range(len(events)):
+            ne = len(t_events[jj])
+            te = np.empty((ne,), np.float64)
+            xe = np.empty((ne, nx), np.float64)
+            for kk in range(ne):
+                te[kk] = t_events[jj][kk]
+                xe[kk] = x_events[jj][kk]
+            te_out.append(te)
+            xe_out.append(xe)
+    else:
+        te_out = None
+        xe_out = None
 
     return (ts_out, xs_out, (fs_out, Fs_out), (te_out, xe_out))
