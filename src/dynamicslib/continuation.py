@@ -1,6 +1,9 @@
 from dynamicslib.targeter import *
+from warnings import warn
 from typing import List
 from tqdm.auto import tqdm
+import pandas as pd
+from scipy.interpolate import UnivariateSpline
 
 
 def arclen_cont(
@@ -68,7 +71,7 @@ def arclen_cont(
         if np.dot(tangent, tangent_prev) < 0:
             tangent *= -1
         try:
-            X, dF, stm = dc_arclen(
+            X, dF, stm, _ = dc_arclen(
                 X,
                 tangent,
                 f_df_stm_func,
@@ -115,9 +118,15 @@ def arclen_variable_step(
     S: float = 0.5,
     tol: float = 1e-10,
     max_iter: int = 10,
+    rate: float = 1.05,
+    reduce_maxiter: float = 5.0,
+    reduce_reverse: float = 2.0,
     exact_tangent: bool = False,
 ) -> Tuple[List, List]:
-    """Pseudoarclength continuation wrapper. The modified algorithm has a full step size of s, rather than projected step size.
+    """Pseudoarclength continuation wrapper with variable step size. This modified algorithm has a full step size of s, rather than projected step size.
+    At each step, the step size multiplies by num_iters/num_iters_previous, in so that if it takes longer to converge we reduce the step size
+    At each step, the step size also multiplies by the dot product between the tangent vector and the step; if this dot product is close to 1, then the curve is not sharp and step size wont be reduced. Else, it will.
+    At each step, the step size also multiplies by the parameter `rate`, which should be >1 to ensure step size can recover
 
     Args:
         X0 (NDArray): initial control variables
@@ -127,23 +136,25 @@ def arclen_variable_step(
         S (float, optional): terminate at this arclength. Defaults to 0.5.
         tol (float, optional): tolerance for convergence. Defaults to 1e-10.
         max_iter: (int | None, optional): maximum number of iterations. Will return what it's computed so far if it exceeds that
-        fudge: (float | None, optional): multiply step size by this much in the differential corrector
+        rate (float, optional): the rate of increase of step size in the absense of any other change
+        reduce_maxiter (float, optional): If we hit the maximum iterations on one attempt, reduce the step size by a factor of this much
+        reduce_reverse (float, optional): If there's a possibility that the solution curve is reversing backward on itself, reduce the step size by a factor of this much
         exact_tangent (bool, optional): whether the tangent vector `dir0` passed in is exact or approximate. If approximate, it is only used to check direction with a dot product. Otherwise, it is used as-is.
-        modified (bool, optional): Whether to use modified algorithm. Defaults to True.
-        stop_callback (Callable): Function with signature f(X, current_eigvals, previous_eigvals, *kwargs) which returns True when continuation should terminate. If None, will only terminate when the final arclength is reached. Defaults to None.
-        stop_kwags (dict, optional): keyword arguments to stop_calback. Defaults to {}.
 
 
     Returns:
         Tuple[List, List]: all Xs, all eigenvalues
     """
-    # if no stop callback, make one
+    assert rate >= 1
+    assert reduce_maxiter > 1
+    assert reduce_reverse > 1
+
     X = X0.copy()
     tangent_prev = dir0 / np.linalg.norm(dir0)
 
     _, dF, stm = f_df_stm_func(X0)
     svd = np.linalg.svd(dF)
-    tangent = dir0.copy() if exact_tangent else svd.Vh[-1]
+    tangent = tangent_prev.copy() if exact_tangent else svd.Vh[-1]
 
     # # if the direction we asked for is normal to the computed tangent, use the second-most tangent vector
     # if np.abs(np.dot(tangent, dir0)) < 1e-5:
@@ -160,12 +171,11 @@ def arclen_variable_step(
     niters = 0
     niters_prev = max_iter
     # ensure that the stopping condition hasnt been satisfied
-    while arclen < S and s > s_min:
-        # if we flip flop, undo the flipflop
-        if np.dot(tangent, tangent_prev) < 0:
-            tangent *= -1
+    while arclen < S and s >= s_min:
+        bar.set_description(f"s = {s:.3e}")
+
         try:
-            X, dF, stm, niters = dc_arclen_w_iter(
+            X, dF, stm, niters = dc_arclen(
                 X, tangent, f_df_stm_func, s, tol, modified=True, max_iter=max_iter
             )
         except np.linalg.LinAlgError as err:
@@ -173,14 +183,34 @@ def arclen_variable_step(
             print("returning what's been calculated so far")
             break
         except RuntimeError as err:
-            print("FAILED STEP, HALVING STEP SIZE")
-            niters = max_iter
-            s /= 2
-            bar.set_description(f"s = {s:.3e}")
+            warn(f"@S={arclen:.3f}: Failed step, decreasing step size and rejecting")
+            # reject the last step
+            s /= reduce_maxiter
+            dS = np.linalg.norm(Xs[-1] - Xs[-2])
+            arclen -= dS
+            bar.update(-dS)
+            Xs.pop()
+            X = Xs[-1]
+            tangent = tangent_prev
             continue
-        if arclen == 0.:
+        if arclen == 0.0:
             niters_prev = niters
-            
+
+        # print(np.dot(tangent, X - Xs[-1])/s)
+        dprod_check = np.dot(tangent, X - Xs[-1]) / s
+        if dprod_check < 0.5:
+            warn(
+                "@S={arclen:.3f}: Possibly reversal, decreasing step size and rejecting"
+            )
+            # reject the last step
+            s /= reduce_reverse
+            dS = np.linalg.norm(Xs[-1] - Xs[-2])
+            arclen -= dS
+            bar.update(-dS)
+            Xs.pop()
+            X = Xs[-1]
+            tangent = tangent_prev
+
         Xs.append(X)
 
         eig_vals.append(np.linalg.eigvals(stm))
@@ -189,12 +219,17 @@ def arclen_variable_step(
 
         svd = np.linalg.svd(dF)
         tangent = svd.Vh[-1]
+        # if we flip flop, undo the flipflop
+        if np.dot(tangent, Xs[-1] - Xs[-2]) < 0:
+            tangent *= -1
 
         arclen += s
         bar.update(float(s))
-        s *= (niters_prev/niters) * 1.05
+        s *= (niters_prev / niters) * rate * dprod_check
         niters_prev = niters
-        bar.set_description(f"s = {s:.3e}")
+
+    if s < s_min:
+        print("Step size smaller than minimum allowable- terminating")
 
     bar.close()
 
@@ -342,7 +377,9 @@ def find_bif(
     while True:
         if np.dot(tangent, tangent_prev) < 0:
             tangent *= -1
-        X, dF, stm = dc_arclen(X, np.sign(s) * tangent, f_df_stm_func, abs(s), targ_tol)
+        X, dF, stm, _ = dc_arclen(
+            X, np.sign(s) * tangent, f_df_stm_func, abs(s), targ_tol
+        )
 
         Xs.append(X.copy())
         tangent_prev = tangent
@@ -483,7 +520,7 @@ def find_bif(
 #         svd = np.linalg.svd(dF)
 #         tangent = svd.Vh[-1]
 
-#         X, dF, stm = dc_arclen(X, tangent, f_df_stm_func, s, tol)
+#         X, dF, stm_,  = dc_arclen(X, tangent, f_df_stm_func, s, tol)
 
 #     X[-1] *= N
 #     _, dF, _ = f_df_stm_func(X)
@@ -529,7 +566,7 @@ def find_bif(
 #     while True:
 #         if np.dot(tangent, tangent_prev) < 0:
 #             tangent *= -1
-#         X, dF, stm = dc_arclen(X, tangent, f_df_stm_func, s, tol)
+#         X, dF, stm, _ = dc_arclen(X, tangent, f_df_stm_func, s, tol)
 
 #         Xs.append(X)
 
@@ -631,3 +668,53 @@ def arclen_to_fail(
     bar.close()
 
     return Xs, eig_vals
+
+
+def get_bifurcation_funcs(df, bif_type: tuple | str):
+    if isinstance(bif_type, tuple):
+        if len(bif_type) == 1:
+            n = bif_type[0]
+        elif len(bif_type) == 2:
+            n = bif_type[0] / bif_type[1]
+        else:
+            raise ValueError(
+                "Period-multiplying bifurcation type must be given as (n,) or (n,m)"
+            )
+        angle = 2 * np.pi / n
+        cos_val = np.cos(angle)
+        bisect_func = (
+            lambda alpha, beta: -2 * cos_val * alpha + (2 - 4 * cos_val**2) - beta
+        )
+    else:
+        match bif_type.lower():
+            case "tangent":
+                bisect_func = lambda alpha, beta: beta + 2 + 2 * alpha
+            case "hopf":
+                bisect_func = lambda alpha, beta: beta - alpha**2 / 4 - 2
+            case _:
+                raise NotImplementedError("womp womp")
+
+    params = [
+        "Initial x",
+        "Initial y",
+        "Initial z",
+        "Initial vx",
+        "Initial vy",
+        "Initial vz",
+        "Period",
+    ]
+    for param in params:
+        if param not in df.columns:
+            df[param] = 0.0
+
+    eig_df = df[[col for col in df.columns if "Eig" in col]]
+    eigs = eig_df.values.astype(np.complex128)
+    alpha = 2 - np.sum(eigs, axis=1).real
+    beta = (alpha**2 - (np.sum(eigs**2, axis=1).real - 2)) / 2
+
+    beta_bifurcate = bisect_func(alpha, beta)
+
+    func = beta - beta_bifurcate
+    inds = df.index
+    spline_dict = {param: UnivariateSpline(inds, df[param]) for param in params}
+    return UnivariateSpline(inds, func), spline_dict
