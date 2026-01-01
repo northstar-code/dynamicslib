@@ -59,6 +59,49 @@ def dc_arclen(
 
     return X, dF, stm_full
 
+def dc_arclen_w_iter(
+    X_prev: NDArray,
+    tangent: NDArray,
+    f_df_func: Callable,
+    s: float = 1e-3,
+    tol: float = 1e-8,
+    modified: bool = True,
+    max_iter: int | None = None,
+    fudge: float | None = None,
+    max_step: float | None = None,
+    debug: bool = False,
+) -> Tuple[NDArray, NDArray, NDArray]:
+    # To be phased out later
+    X = X_prev + s * tangent
+    if fudge is None:
+        fudge = 1.0
+
+    nX = len(X)
+    dF = np.empty((nX - 1, nX))
+    stm_full = np.empty((nX, nX))
+
+    G = np.array([np.inf] * nX)
+    niters = 0
+    dX = np.array([np.inf] * nX)
+    while np.linalg.norm(G) > tol and np.linalg.norm(dX) > tol:
+        if max_iter is not None and niters > max_iter:
+            raise RuntimeError("Exceeded maximum iterations")
+        f, dF, stm_full = f_df_func(X)
+        delta = X - X_prev
+        lastG = np.dot(delta, delta) - s**2 if modified else np.dot(delta, tangent) - s
+        lastDG = 2 * delta if modified else tangent
+        G = np.array([*f, lastG])
+        dG = np.vstack((dF, lastDG))
+        dX = -np.linalg.inv(dG) @ G
+        if max_step is not None and np.linalg.norm(dX) > max_step:
+            dX *= max_step / np.linalg.norm(dX)
+        X += dX * fudge
+        if debug:
+            print(niters, dX)
+        niters += 1
+
+    return X, dF, stm_full, niters
+
 
 def dc_square(
     X_guess: NDArray,
