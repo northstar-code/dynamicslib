@@ -118,9 +118,11 @@ def arclen_variable_step(
     S: float = 0.5,
     tol: float = 1e-10,
     max_iter: int = 10,
-    rate: float = 1.05,
+    rate: float = 1.15,
     reduce_maxiter: float = 5.0,
     reduce_reverse: float = 2.0,
+    exp_direction: float = 10.0,
+    exp_iters: float = 0.3,
     exact_tangent: bool = False,
 ) -> Tuple[List, List]:
     """Pseudoarclength continuation wrapper with variable step size. This modified algorithm has a full step size of s, rather than projected step size.
@@ -173,7 +175,6 @@ def arclen_variable_step(
     # ensure that the stopping condition hasnt been satisfied
     while arclen < S and s >= s_min:
         bar.set_description(f"s = {s:.3e}")
-
         try:
             X, dF, stm, niters = dc_arclen(
                 X, tangent, f_df_stm_func, s, tol, modified=True, max_iter=max_iter
@@ -183,7 +184,7 @@ def arclen_variable_step(
             print("returning what's been calculated so far")
             break
         except RuntimeError as err:
-            warn(f"@S={arclen:.3f}: Failed step, decreasing step size and rejecting")
+            # print(f"@S={arclen:.3f}: Failed step, decreasing step size and rejecting")
             # reject the last step
             s /= reduce_maxiter
             dS = np.linalg.norm(Xs[-1] - Xs[-2])
@@ -198,9 +199,9 @@ def arclen_variable_step(
 
         # print(np.dot(tangent, X - Xs[-1])/s)
         dprod_check = np.dot(tangent, X - Xs[-1]) / s
-        if dprod_check < 0.5:
-            warn(
-                "@S={arclen:.3f}: Possibly reversal, decreasing step size and rejecting"
+        if dprod_check < 0.8:
+            print(
+                f"@S={arclen:.3f}: Possibly reversal, decreasing step size and rejecting"
             )
             # reject the last step
             s /= reduce_reverse
@@ -225,7 +226,7 @@ def arclen_variable_step(
 
         arclen += s
         bar.update(float(s))
-        s *= (niters_prev / niters) * rate * dprod_check
+        s *= (niters_prev / niters) ** exp_iters * rate * dprod_check**exp_direction
         niters_prev = niters
 
     if s < s_min:
