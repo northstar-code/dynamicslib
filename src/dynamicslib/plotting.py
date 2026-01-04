@@ -1204,15 +1204,70 @@ def family_slider(
 
     if not is2d:
         curve = plotly_curve(
-            [np.nan], [np.nan], [np.nan], "", color=color, width=10, uid="traj"
+            [np.nan], [np.nan], [np.nan], "", color=color, width=7, uid="traj"
         )
     else:
         curve = plotly_curve_2d(
-            [np.nan], [np.nan], "", color=color, width=2.5, uid="traj"
+            [np.nan], [np.nan], "", color=color, width=1.5, uid="traj"
         )
 
     # make a colorbar with nan data
     fig = go.Figure(data=[curve])
+
+    # draw primaries and Lagrange points
+    Lpoints = get_Lpts(mu=mu)
+    if is2d:
+        for jj, lp in enumerate(Lpoints.T):
+            fig.add_trace(
+                go.Scatter(
+                    x=[lp[0]],
+                    y=[lp[1]],
+                    name=f"L{jj+1}",
+                    hoverinfo="x+y+name",
+                    mode="markers",
+                    marker=dict(color="magenta", size=4),
+                    visible=True,
+                )
+            )
+        for jj, xb in enumerate([-mu, 1 - mu]):
+            fig.add_trace(
+                go.Scatter(
+                    x=[xb],
+                    y=[0],
+                    mode="markers",
+                    name=f"P{jj+1}",
+                    hoverinfo="x+y+name",
+                    marker=dict(color="cyan"),
+                    visible=True,
+                )
+            )
+    else:
+        for jj, lp in enumerate(Lpoints.T):
+            fig.add_trace(
+                go.Scatter3d(
+                    x=[lp[0]],
+                    y=[lp[1]],
+                    z=[0],
+                    name=f"L{jj+1}",
+                    hoverinfo="x+y+name",
+                    mode="markers",
+                    marker=dict(color="magenta", size=4),
+                    visible=True,
+                )
+            )
+        for jj, xb in enumerate([-mu, 1 - mu]):
+            fig.add_trace(
+                go.Scatter3d(
+                    x=[xb],
+                    y=[0],
+                    z=[0],
+                    mode="markers",
+                    name=f"P{jj+1}",
+                    hoverinfo="x+y+name",
+                    marker=dict(color="cyan"),
+                    visible=True,
+                )
+            )
 
     if n_arrow > 0:
         if not is2d:
@@ -1225,7 +1280,7 @@ def family_slider(
                 w=[np.nan],
                 anchor="center",
                 sizemode="raw",
-                sizeref=2 / 20,
+                sizeref=1 / 20,
                 colorscale=[color, color],
                 showscale=False,
             )
@@ -1244,54 +1299,7 @@ def family_slider(
                 ),
             )
         fig.add_trace(arrows)
-
-    # draw primaries and Lagrange points
-    Lpoints = get_Lpts(mu=mu)
-    if is2d:
-        fig.add_trace(
-            go.Scatter(
-                x=Lpoints[0],
-                y=Lpoints[1],
-                text=[f"L{lp+1}" for lp in range(5)],
-                hoverinfo="x+y+text",
-                mode="markers",
-                marker=dict(color="magenta", size=4),
-            )
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=[-mu, 1 - mu],
-                y=[0, 0],
-                mode="markers",
-                text=["P1", "P2"],
-                hoverinfo="x+y+text",
-                marker=dict(color="cyan"),
-            )
-        )
-    else:
-        fig.add_trace(
-            go.Scatter3d(
-                x=Lpoints[0],
-                y=Lpoints[1],
-                z=0 * Lpoints[0],
-                text=[f"L{lp+1}" for lp in range(5)],
-                hoverinfo="x+y+text",
-                mode="markers",
-                marker=dict(color="magenta", size=4),
-            )
-        )
-        fig.add_trace(
-            go.Scatter3d(
-                x=[-mu, 1 - mu],
-                y=[0, 0],
-                z=[0, 0],
-                mode="markers",
-                text=["P1", "P2"],
-                hoverinfo="x+y+text",
-                marker=dict(color="cyan"),
-            )
-        )
-
+    
     # set layout
     fig.update_layout(
         width=figsize[0],
@@ -1311,8 +1319,6 @@ def family_slider(
         fig.update_yaxes(scaleanchor="x", scaleratio=1, exponentformat="power")
         fig.update_xaxes(exponentformat="power")
     else:
-        x_range = (-1, 1)
-        fixed_range = (-1, 1)
         fig.update_scenes(
             xaxis=dict(
                 title="x [nd]",
@@ -1368,13 +1374,27 @@ def family_slider(
         x0 = targ.get_x0(X)
         tf = targ.get_period(X)
         xyz = prop(x0, tf, mu=mu, int_tol=int_tol, density_mult=n_arrow)
+        x, y, z = xyz[:3]
+        xl = np.array([np.min(x), np.max(x)])
+        xl = np.mean(xl) + 2.0 * (xl - np.mean(xl))
+        yl = np.array([np.min(y), np.max(y)])
+        yl = np.mean(yl) + 2.0 * (yl - np.mean(yl))
 
-        # jc = jacobi_constant(x0)
-        # lbl = make_label(np.append(point, jc), param_names + ["Jacobi Constant"])
-        patch.data[0].x = xyz[0]
-        patch.data[0].y = xyz[1]
+        # print(3)
+        # print(fig.data[2])
+        # print(4)
+        for ii in range(7):
+            if isinstance(fig, dict):
+                pdata = fig['data'][ii+1]
+            else:
+                pdata = fig.data[ii+1]
+            # print(pdata)
+            patch.data[ii+1].visible = xl[0] <= pdata['x'][0] <= xl[1] and yl[0] <= pdata['y'][0] <= yl[1]
+
+        patch.data[0].x = x
+        patch.data[0].y = y
         if not is2d:
-            patch.data[0].z = xyz[2]
+            patch.data[0].z = z
 
         if n_arrow > 0:
             N = xyz.shape[1]  # num points
@@ -1398,21 +1418,21 @@ def family_slider(
                 # extract components
                 xc, yc, zc = xyz[:3, inds]
                 uc, vc, wc = vels
-                patch.data[1].x = xc
-                patch.data[1].y = yc
-                patch.data[1].z = zc
-                patch.data[1].u = uc
-                patch.data[1].v = vc
-                patch.data[1].w = wc
+                patch.data[-1].x = xc
+                patch.data[-1].y = yc
+                patch.data[-1].z = zc
+                patch.data[-1].u = uc
+                patch.data[-1].v = vc
+                patch.data[-1].w = wc
             else:
                 xc, yc = xyz[:2, inds]
                 uc, vc = vels[:2]
                 angs = 90 - np.rad2deg(np.atan2(vc, uc))
 
-                patch.data[1].marker.angle = angs
-                patch.data[1].x = xc
-                patch.data[1].y = yc
-
+                patch.data[-1].marker.angle = angs
+                patch.data[-1].x = xc
+                patch.data[-1].y = yc
+        # TODO: rescale arrows too
         # sleep(1e-1)
         return patch
 
