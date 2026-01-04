@@ -11,10 +11,14 @@ import plotly
 from numba import njit
 from scipy.signal import find_peaks
 from base64 import b64encode
-from dash import Dash, dcc, html, Input, Output, callback
+from dash import Dash, dcc, html, Input, Output, State, Patch, callback
 from dynamicslib.consts import muEM, LU, TU
-from dynamicslib.common import get_Lpts
+from dynamicslib.common import get_Lpts, prop, jacobi_constant
+from dynamicslib.common_targetters import Targetter
+from dynamicslib.targeter import dc_overconstrained
 from plotly.subplots import make_subplots
+from scipy.interpolate import CubicSpline
+from time import sleep
 import os
 
 plotly.offline.init_notebook_mode()
@@ -318,7 +322,7 @@ def plotly_display(
     if flip_vert:
         full_dataframe["Initial z"] *= -1
         if "Initial vz" in full_dataframe.columns:
-            full_dataframe["Initial vy"] *= -1
+            full_dataframe["Initial vz"] *= -1
         xyzs_temp = xyzs.copy()
         for ii in range(len(xyzs_temp)):
             trj = xyzs_temp[ii]
@@ -327,19 +331,12 @@ def plotly_display(
                 xyzs_temp[ii] += (trj[3], trj[4], -trj[5])
         xyzs = xyzs_temp
     if flip_horiz:
-        print(
-            Warning(
-                "Horizontal flip does not update vy properly; do not trust vy information"
-            )
-        )
-        # if "Initial y" in full_dataframe.columns:
-        #     full_dataframe["Initial vy"] *= -1
         xyzs_temp = xyzs.copy()
         for ii in range(len(xyzs_temp)):
             trj = xyzs_temp[ii]
-            xyzs_temp[ii] = (trj[0], -trj[1], trj[2])
+            xyzs_temp[ii] = (trj[0][::-1], -trj[1][::-1], trj[2][::-1])
             if len(trj) > 3:
-                xyzs_temp[ii] += (trj[3], -trj[4], trj[5])
+                xyzs_temp[ii] += (trj[3][::-1], trj[4][::-1], trj[5][::-1])
         xyzs = xyzs_temp
 
     # build dataframe
@@ -735,9 +732,9 @@ def hodographs(
                 y=data_y,
                 name=f"{ix}, {iy}",
                 hoverinfo="x+y",
-                mode="lines",
+                mode="lines+markers",
                 hoverlabel=dict(namelength=-1, bgcolor="black", font_color="white"),
-                # marker=dict(color=c, size=1),
+                marker=dict(color=c, size=3),
                 line=dict(color="white", width=0.5),
             )
             fig.add_trace(curve, row=iy + 1, col=ix + 1)
@@ -1047,7 +1044,7 @@ def bifurcation_search(
         fig.write_html(html_save, include_plotlyjs="cdn")
 
 
-def test_points(df_compare: pd.DataFrame, colormap="rainbow"):
+def test_new_family(df_compare: pd.DataFrame, colormap="rainbow"):
     for col in ["Initial " + state for state in ["x", "y", "z", "vx", "vy", "vz"]]:
         if col in df_compare.columns and np.all(np.abs(df_compare[col])) < 1e-9:
             df_compare = df_compare.drop(columns=col)
@@ -1058,7 +1055,9 @@ def test_points(df_compare: pd.DataFrame, colormap="rainbow"):
 
     root = f"{os.getcwd()}/database/"
     filenames = [
-        file.removesuffix(".csv") for file in os.listdir(root) if file.endswith("csv")
+        file.removesuffix(".csv")
+        for file in os.listdir(root)
+        if file.endswith("csv") and ("Horseshoe" in file)
     ]
     vals_dict = {}
     for fname in filenames:
@@ -1138,3 +1137,284 @@ def test_points(df_compare: pd.DataFrame, colormap="rainbow"):
 
     config = dict(displaylogo=False, displayModeBar=True)
     fig.show(config=config)
+
+
+def family_slider(
+    full_dataframe: pd.DataFrame,
+    targ: Targetter,
+    targ_tol: float = 1e-12,
+    int_tol: float = 1e-13,
+    mu: float = muEM,
+    figsize: tuple[float, float] = (900, 600),
+    flip_vert: bool = False,
+    flip_horiz: bool = False,
+    n_arrow: int = 2,
+    port: int = 8050,
+    color="white",
+):
+    """Displays a family using a Plotly figure
+
+    Args:
+        xyzs (List): prepropagated trajectory ((3 x Ni)_i for i in num trajectories)
+        full_dataframe (pd.DataFrame): Dataframe of values. Must include indices at least.
+        colormap (str, optional): What color map to use. Defaults to "rainbow".
+        mu (float, optional): Mu value. Used to show the Lagrange points and primaries. Defaults to muEM.
+        figsize (tuple[float, float], optional): Figure size (in pix? I think?). Defaults to (900, 600).
+        port (int, optional): What port number to use. Don't reuse the same port for multiple plots. Defaults to 8050.
+        flip_vert (bool, optional): Flip horizontally. Defaults to False.
+        flip_horiz (bool, optional): Flip vertically. Defaults to False.
+        n_arrow (int, optional): How many arrows per curve
+
+    Returns:
+        None
+    """
+    full_dataframe = full_dataframe.reset_index(drop=True)
+
+    param_names = ["Initial " + dim for dim in ["x", "y", "z", "vx", "vy", "vz"]]
+    param_names += ["Period", "Jacobi Constant"]
+    for col in param_names:
+        if col not in full_dataframe.columns:
+            full_dataframe[col] = 0.0
+    # do the flips
+    if flip_vert:
+        full_dataframe["Initial z"] *= -1
+        full_dataframe["Initial vz"] *= -1
+    if flip_horiz:
+        full_dataframe["Initial y"] *= -1
+        full_dataframe["Initial vy"] *= -1
+
+    # build dataframe
+    df = full_dataframe[param_names].astype(np.float32)
+    df = df.drop_duplicates(subset=None, keep="first", ignore_index=True)
+    vals = df[param_names[:-1]].values
+
+    # arclength (parameterize by this)
+    arclen = np.append(0, np.cumsum(np.linalg.norm(np.diff(vals, axis=0), axis=1)))
+    smax = max(arclen)
+    n = len(df)
+
+    spline = CubicSpline(arclen, vals, axis=0)
+
+    # PLOTTING
+    # check whether it's planar (will use 2d plot if so)
+    is2d = (
+        np.max(np.abs(df["Initial z"].values)) < 1e-9
+        and np.max(np.abs(df["Initial vz"].values)) < 1e-9
+    )
+
+    if not is2d:
+        curve = plotly_curve(
+            [np.nan], [np.nan], [np.nan], "", color=color, width=10, uid="traj"
+        )
+    else:
+        curve = plotly_curve_2d(
+            [np.nan], [np.nan], "", color=color, width=2.5, uid="traj"
+        )
+
+    # make a colorbar with nan data
+    fig = go.Figure(data=[curve])
+
+    if n_arrow > 0:
+        if not is2d:
+            arrows = go.Cone(
+                x=[np.nan],
+                y=[np.nan],
+                z=[np.nan],
+                u=[np.nan],
+                v=[np.nan],
+                w=[np.nan],
+                anchor="center",
+                sizemode="raw",
+                sizeref=2 / 20,
+                colorscale=[color, color],
+                showscale=False,
+            )
+        else:
+            arrows = go.Scatter(
+                x=[np.nan],
+                y=[np.nan],
+                mode="markers",
+                hoverinfo="none",
+                marker=dict(
+                    color=color,
+                    symbol="triangle-up",
+                    size=15,
+                    angle=np.nan,
+                    standoff=7.5,
+                ),
+            )
+        fig.add_trace(arrows)
+
+    # draw primaries and Lagrange points
+    Lpoints = get_Lpts(mu=mu)
+    if is2d:
+        fig.add_trace(
+            go.Scatter(
+                x=Lpoints[0],
+                y=Lpoints[1],
+                text=[f"L{lp+1}" for lp in range(5)],
+                hoverinfo="x+y+text",
+                mode="markers",
+                marker=dict(color="magenta", size=4),
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[-mu, 1 - mu],
+                y=[0, 0],
+                mode="markers",
+                text=["P1", "P2"],
+                hoverinfo="x+y+text",
+                marker=dict(color="cyan"),
+            )
+        )
+    else:
+        fig.add_trace(
+            go.Scatter3d(
+                x=Lpoints[0],
+                y=Lpoints[1],
+                z=0 * Lpoints[0],
+                text=[f"L{lp+1}" for lp in range(5)],
+                hoverinfo="x+y+text",
+                mode="markers",
+                marker=dict(color="magenta", size=4),
+            )
+        )
+        fig.add_trace(
+            go.Scatter3d(
+                x=[-mu, 1 - mu],
+                y=[0, 0],
+                z=[0, 0],
+                mode="markers",
+                text=["P1", "P2"],
+                hoverinfo="x+y+text",
+                marker=dict(color="cyan"),
+            )
+        )
+
+    # set layout
+    fig.update_layout(
+        width=figsize[0],
+        height=figsize[1],
+        template="plotly_dark",
+        showlegend=False,
+        margin=dict(l=0, r=30, b=0, t=0),
+        plot_bgcolor="#000000",
+        paper_bgcolor="#000000",
+    )
+    # set axes
+    if is2d:
+        fig.update_layout(
+            xaxis=dict(title="x [nd]"),
+            yaxis=dict(title="y [nd]"),
+        )
+        fig.update_yaxes(scaleanchor="x", scaleratio=1, exponentformat="power")
+        fig.update_xaxes(exponentformat="power")
+    else:
+        x_range = (-1, 1)
+        fixed_range = (-1, 1)
+        fig.update_scenes(
+            xaxis=dict(
+                title="x [nd]",
+                showbackground=False,
+                showgrid=True,
+                zeroline=False,
+                exponentformat="power",
+                # range=x_range,
+            ),
+            yaxis=dict(
+                title="y [nd]",
+                showbackground=False,
+                showgrid=True,
+                zeroline=False,
+                exponentformat="power",
+                # range=fixed_range,
+            ),
+            zaxis=dict(
+                title="z [nd]",
+                showbackground=False,
+                showgrid=True,
+                zeroline=False,
+                exponentformat="power",
+                # range=fixed_range,
+            ),
+            aspectmode="data",  # Keeps the 1:1:1 ratio
+            # aspectmode="cube",
+        )
+
+    # Dash dropdowns
+
+    app = Dash()
+    app.layout = html.Div(
+        [
+            dcc.Graph(figure=fig, id="display"),
+            dcc.Slider(0.0, 1.0, None, value=0.0, id="slider"),
+        ]
+    )
+
+    @callback(
+        Output("display", "figure", allow_duplicate=False),
+        Input("slider", "value"),
+        State("display", "figure"),
+        prevent_initial_call=False,
+    )
+    def update_curve(value, fig):
+        patch = Patch()
+        # updated_fig = go.Figure(fig)
+        point = spline(value * smax)  # CALL THIS
+        x0, tf = point[:6], point[-1]
+        Xg = targ.get_X(x0, tf)
+        X, _, _ = dc_overconstrained(Xg, targ.f_df_stm, targ_tol, debug=False)
+        x0 = targ.get_x0(X)
+        tf = targ.get_period(X)
+        xyz = prop(x0, tf, mu=mu, int_tol=int_tol, density_mult=n_arrow)
+
+        # jc = jacobi_constant(x0)
+        # lbl = make_label(np.append(point, jc), param_names + ["Jacobi Constant"])
+        patch.data[0].x = xyz[0]
+        patch.data[0].y = xyz[1]
+        if not is2d:
+            patch.data[0].z = xyz[2]
+
+        if n_arrow > 0:
+            N = xyz.shape[1]  # num points
+            # arclength for uniformly-ish spaced dots
+            arc = np.append(0, np.cumsum(np.linalg.norm(np.diff(xyz[:3], 1), axis=0)))
+            arc /= np.max(arc)
+
+            where = np.interp(np.arange(n_arrow) / n_arrow, arc, np.arange(N))
+
+            # indices where to draw arrow/cone
+            inds = np.int32(np.round(where))
+
+            vels = (
+                xyz[3:, inds] if len(xyz) > 3 else xyz[:, inds + 1] - xyz[:, inds]
+            )  # velocities
+
+            # normalize
+            vels = np.array([vel / np.linalg.norm(vel) for vel in vels.T]).T
+            if not is2d:
+
+                # extract components
+                xc, yc, zc = xyz[:3, inds]
+                uc, vc, wc = vels
+                patch.data[1].x = xc
+                patch.data[1].y = yc
+                patch.data[1].z = zc
+                patch.data[1].u = uc
+                patch.data[1].v = vc
+                patch.data[1].w = wc
+            else:
+                xc, yc = xyz[:2, inds]
+                uc, vc = vels[:2]
+                angs = 90 - np.rad2deg(np.atan2(vc, uc))
+
+                patch.data[1].marker.angle = angs
+                patch.data[1].x = xc
+                patch.data[1].y = yc
+
+        # sleep(1e-1)
+        return patch
+
+    update_curve(0.0, fig)
+    app.run(debug=False, use_reloader=False, port=port)
