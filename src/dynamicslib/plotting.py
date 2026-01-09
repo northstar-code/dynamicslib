@@ -1145,10 +1145,10 @@ def family_slider(
     targ_tol: float = 1e-12,
     int_tol: float = 1e-13,
     mu: float = muEM,
-    figsize: tuple[float, float] = (900, 600),
+    figsize: tuple[float, float] | None = None,  # (900, 600),
     flip_vert: bool = False,
     flip_horiz: bool = False,
-    n_arrow: int = 2,
+    n_arrow: int = 0,
     port: int = 8050,
     color="white",
 ):
@@ -1168,7 +1168,11 @@ def family_slider(
     Returns:
         None
     """
-    full_dataframe = full_dataframe.reset_index(drop=True)
+    # families = [file.removesuffix(".csv") for file in os.listdir(db_dir) if file.endswith(".csv")]
+    # fam = families[0]
+    # full_dataframe = pd.read_csv(fam+".csv") # TODO
+    if "Index" in full_dataframe.columns:
+        full_dataframe.set_index("Index")
 
     param_names = ["Initial " + dim for dim in ["x", "y", "z", "vx", "vy", "vz"]]
     param_names += ["Period", "Jacobi Constant"]
@@ -1185,14 +1189,14 @@ def family_slider(
 
     # build dataframe
     df = full_dataframe[param_names].astype(np.float32)
-    df = df.drop_duplicates(subset=None, keep="first", ignore_index=True)
+    df = df.drop_duplicates(subset=param_names, keep="first", ignore_index=False)
     vals = df[param_names[:-1]].values
 
+    ind0 = np.searchsorted(df.index, 0)
     # arclength (parameterize by this)
     arclen = np.append(0, np.cumsum(np.linalg.norm(np.diff(vals, axis=0), axis=1)))
     smax = max(arclen)
-    n = len(df)
-
+    s0 = arclen[ind0]  # start here
     spline = CubicSpline(arclen, vals, axis=0)
 
     # PLOTTING
@@ -1217,58 +1221,49 @@ def family_slider(
     # draw primaries and Lagrange points
     Lpoints = get_Lpts(mu=mu)
     if is2d:
-        for jj, lp in enumerate(Lpoints.T):
-            fig.add_trace(
-                go.Scatter(
-                    x=[lp[0]],
-                    y=[lp[1]],
-                    name=f"L{jj+1}",
-                    hoverinfo="x+y+name",
-                    mode="markers",
-                    marker=dict(color="magenta", size=4),
-                    visible=True,
-                )
+        fig.add_trace(
+            go.Scatter(
+                x=Lpoints[0],
+                y=Lpoints[1],
+                mode="markers",
+                text=[f"L{jj+1}" for jj in range(5)],
+                hoverinfo="x+y+text",
+                marker=dict(color="magenta", size=4),
             )
-        for jj, xb in enumerate([-mu, 1 - mu]):
-            fig.add_trace(
-                go.Scatter(
-                    x=[xb],
-                    y=[0],
-                    mode="markers",
-                    name=f"P{jj+1}",
-                    hoverinfo="x+y+name",
-                    marker=dict(color="cyan"),
-                    visible=True,
-                )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[-mu, 1-mu],
+                y=[0,0],
+                mode="markers",
+                text=["P1", "P2"],
+                hoverinfo="x+y+text",
+                marker=dict(color="cyan"),
             )
+        )
     else:
-        for jj, lp in enumerate(Lpoints.T):
-            fig.add_trace(
-                go.Scatter3d(
-                    x=[lp[0]],
-                    y=[lp[1]],
-                    z=[0],
-                    name=f"L{jj+1}",
-                    hoverinfo="x+y+name",
-                    mode="markers",
-                    marker=dict(color="magenta", size=4),
-                    visible=True,
-                )
+        fig.add_trace(
+            go.Scatter3d(
+                x=Lpoints[0],
+                y=Lpoints[1],
+                z=0 * Lpoints[0],
+                text=[f"L{jj+1}" for jj in range(5)],
+                hoverinfo="x+y+text",
+                mode="markers",
+                marker=dict(color="magenta", size=4),
             )
-        for jj, xb in enumerate([-mu, 1 - mu]):
-            fig.add_trace(
-                go.Scatter3d(
-                    x=[xb],
-                    y=[0],
-                    z=[0],
-                    mode="markers",
-                    name=f"P{jj+1}",
-                    hoverinfo="x+y+name",
-                    marker=dict(color="cyan"),
-                    visible=True,
-                )
+        )
+        fig.add_trace(
+            go.Scatter3d(
+                x=[-mu, 1 - mu],
+                y=[0, 0],
+                z=[0, 0],
+                mode="markers",
+                text=["P1", "P2"],
+                hoverinfo="x+y+text",
+                marker=dict(color="cyan"),
             )
-
+        )
     if n_arrow > 0:
         if not is2d:
             arrows = go.Cone(
@@ -1299,11 +1294,11 @@ def family_slider(
                 ),
             )
         fig.add_trace(arrows)
-    
+
     # set layout
     fig.update_layout(
-        width=figsize[0],
-        height=figsize[1],
+        width=figsize[0] if figsize is not None else None,
+        height=figsize[1] if figsize is not None else None,
         template="plotly_dark",
         showlegend=False,
         margin=dict(l=0, r=30, b=0, t=0),
@@ -1313,8 +1308,8 @@ def family_slider(
     # set axes
     if is2d:
         fig.update_layout(
-            xaxis=dict(title="x [nd]"),
-            yaxis=dict(title="y [nd]"),
+            xaxis=dict(title="x [nd]", autorange=False, range=[-1, 1]),
+            yaxis=dict(title="y [nd]", autorange=False, range=[-1, 1]),
         )
         fig.update_yaxes(scaleanchor="x", scaleratio=1, exponentformat="power")
         fig.update_xaxes(exponentformat="power")
@@ -1326,7 +1321,8 @@ def family_slider(
                 showgrid=True,
                 zeroline=False,
                 exponentformat="power",
-                # range=x_range,
+                range=(-1, 1),
+                autorange=False,
             ),
             yaxis=dict(
                 title="y [nd]",
@@ -1334,7 +1330,8 @@ def family_slider(
                 showgrid=True,
                 zeroline=False,
                 exponentformat="power",
-                # range=fixed_range,
+                range=(-1, 1),
+                autorange=False,
             ),
             zaxis=dict(
                 title="z [nd]",
@@ -1342,11 +1339,11 @@ def family_slider(
                 showgrid=True,
                 zeroline=False,
                 exponentformat="power",
-                # range=fixed_range,
+                range=(-1, 1),
+                autorange=False,
             ),
-            aspectmode="data",  # Keeps the 1:1:1 ratio
-            # aspectmode="cube",
         )
+        print("???")
 
     # Dash dropdowns
 
@@ -1354,7 +1351,7 @@ def family_slider(
     app.layout = html.Div(
         [
             dcc.Graph(figure=fig, id="display"),
-            dcc.Slider(0.0, 1.0, None, value=0.0, id="slider"),
+            dcc.Slider(0.0, 1.0, 1e-3, value=s0 / smax,marks=None, included=False, updatemode='drag',id="slider"),
         ]
     )
 
@@ -1374,26 +1371,27 @@ def family_slider(
         x0 = targ.get_x0(X)
         tf = targ.get_period(X)
         xyz = prop(x0, tf, mu=mu, int_tol=int_tol, density_mult=n_arrow)
-        x, y, z = xyz[:3]
+        x, y, z = xyz[:3].astype(np.float32)
         xl = np.array([np.min(x), np.max(x)])
-        xl = np.mean(xl) + 2.0 * (xl - np.mean(xl))
         yl = np.array([np.min(y), np.max(y)])
-        yl = np.mean(yl) + 2.0 * (yl - np.mean(yl))
+        zl = np.array([np.min(z), np.max(z)])
+        lims = np.array([xl, yl, zl])
+        ctrs = np.mean(lims, axis=1)
+        w = np.max(lims[:,1]-lims[:,0])
+        bounds = np.array([-w/2, w/2])
+        xl, yl, zl = (ctrs[:,None] + 1.5 * bounds[None, :])
 
-        # print(3)
-        # print(fig.data[2])
-        # print(4)
-        for ii in range(7):
-            if isinstance(fig, dict):
-                pdata = fig['data'][ii+1]
-            else:
-                pdata = fig.data[ii+1]
-            # print(pdata)
-            patch.data[ii+1].visible = xl[0] <= pdata['x'][0] <= xl[1] and yl[0] <= pdata['y'][0] <= yl[1]
-
+    
         patch.data[0].x = x
         patch.data[0].y = y
-        if not is2d:
+
+        if is2d:
+            patch.layout.xaxis.range = xl
+            patch.layout.yaxis.range = yl
+        else:
+            patch.layout.scene.xaxis.range = xl
+            patch.layout.scene.yaxis.range =  yl
+            patch.layout.scene.zaxis.range =  zl
             patch.data[0].z = z
 
         if n_arrow > 0:
@@ -1414,7 +1412,6 @@ def family_slider(
             # normalize
             vels = np.array([vel / np.linalg.norm(vel) for vel in vels.T]).T
             if not is2d:
-
                 # extract components
                 xc, yc, zc = xyz[:3, inds]
                 uc, vc, wc = vels
@@ -1433,8 +1430,11 @@ def family_slider(
                 patch.data[-1].x = xc
                 patch.data[-1].y = yc
         # TODO: rescale arrows too
-        # sleep(1e-1)
+        sleep(1e-2)
         return patch
 
-    update_curve(0.0, fig)
+    # print(ind0, s0 / smax)
+    print("COMPILING HELPERS...", end="")
+    update_curve(s0 / smax, fig)
+    print("\t\tCompiled")
     app.run(debug=False, use_reloader=False, port=port)
