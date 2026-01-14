@@ -7,7 +7,6 @@ from typing import Tuple, Callable, List
 import dynamicslib.DOP853_coefs as coefs
 from dynamicslib.interpolate import dop_interpolate, interp_event
 
-
 # Keeping for later, probably wont use
 @njit(cache=True)
 def rkf45(
@@ -185,18 +184,40 @@ def dop853(
     Tuple[List | None, List | None],
 ]:
     """High order adaptive RK method with interpolation and events location capability.
+    
+    Example calls:
+    ISS orbit:
+    ```
+    ts, xs, _, _ = dop853(gravity_2b, (0., 90.0*3600),
+                          np.array([4193.0, 0, 5290, 0, 7.68452, 0]), 1e-13, args=(3.986e5, ))
+    ```
+    
+    Harmonic Oscillator with returns at maximum and zero and termination at the first ascending zero 
+    ```
+    @njit
+    def maxmin(t,x,k): return x[1] # max or min position
+    @njit
+    def zero(t,x,k): return x[0] # oscillator hits zero
+    
+    events_dispatch = dispatch_events(maxmin, zero) # event dispatcher
+    
+    ts, xs, _, (te, xe) = dop853(harmonic_oscillator, (0., 10.), np.array([5., 1.]), 1e-13,
+                                 events=event_dispatch, n_events=2, terminals=[0,1],
+                                 directions=[0,1], t_eval=np.linspace(0, 10, 1000), args=(spring_k, ))
+    ```
 
     Args:
         func (Callable): dynamics function
-        t_span (Tuple[float, float]): beginning and end times
+        t_span (Tuple[float, float]): beginning and end times MUST BOTH BE FLOATS
         x0 (NDArray): initial state
         int_tol (float, optional): Absolute and relative tolerance (will be assigned to both). Defaults to 1e-12
         atol (float | None, optional): absolute tolerence. Defaults to None. If not None, will override int_tol
         rtol (float | None, optional): rel tolerence. Defaults to None. If not None, will override int_tol
         init_step (float, optional): initial step size. Defaults to 1.0.
-        events (List[Callable] | None): List of ODE events functions. If None, no events. Each function has signature g(t, x, *args) with the same args as f, and returns a float. Defaults to None
-        directions (List | None): ODE event directions. 1 means only trigger when event is increasing, -1 only triggers when decreasing, 0 triggers on both. If the whole list is None, then all events are assigned direction 0
-        terminals (List | None): ODE event terminal counts. Integration will halt at the the termination count specified. 0 means non-terminal event.
+        events (Callable | None, optional): Event function dispatcher. This must be a SINGLE function with signature events(ind_event, t, x, *args) -> float. If None, no events.
+        n_events (int, optional): Number of events functions in the dispatcher. If n_events=N, then events will be called as [events(0, t, x, *args), events(1, t, x, *args), ..., events(N, t, x, *args)]. Defaults to 0
+        directions (List | None, optional): ODE event directions. 1 means only trigger when event is increasing, -1 only triggers when decreasing, 0 triggers on both. If the whole list is None, then all events are assigned direction 0
+        terminals (List | None, optional): ODE event terminal counts. Integration will halt at the the termination count specified. 0 means non-terminal event.
         t_eval (NDArray | None, optional): times to evaluate at. Will interpolate if these are specified. If None, returns only what's evaluated by the RK solver. Defaults to None, meaning all events are non-terminal
         dense_output (bool, optional): whether to collect interpolators. Doing so slightly increases computation time, so do not do if not necessary. If t_eval is provided or events are non-empty, then this is set to True
         args (Tuple, optional): additional args to func(t, x, *args). Defaults to ().
@@ -414,8 +435,14 @@ def dop853(
 
 
 def dispatch_events(*events):
+    """Create compiled event dispatcher
+
+    Returns:
+        Tuple of events functions: Tuple of functions of the form g(t,x,*args) each of which is jitted
+    """
     MAX_EVENTS = 10
 
+    # Made with:
     # strng = ", ".join([f"g{j}" for j in range(MAX_EVENTS)])
     # strng+=" = (events + (nothing,) * MAX_EVENTS)[:MAX_EVENTS]"
     # print(strng)

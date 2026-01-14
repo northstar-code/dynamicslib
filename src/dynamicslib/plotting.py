@@ -731,7 +731,8 @@ def hodographs(
                 x=data_x,
                 y=data_y,
                 name=f"{ix}, {iy}",
-                hoverinfo="x+y",
+                text = [id for id in df.index],
+                hoverinfo="x+y+text",
                 mode="lines+markers",
                 hoverlabel=dict(namelength=-1, bgcolor="black", font_color="white"),
                 marker=dict(color=c, size=3),
@@ -1044,7 +1045,7 @@ def bifurcation_search(
         fig.write_html(html_save, include_plotlyjs="cdn")
 
 
-def test_new_family(df_compare: pd.DataFrame, colormap="rainbow"):
+def test_new_family(df_compare: pd.DataFrame,keyword:str|None=None, colormap="rainbow"):
     for col in ["Initial " + state for state in ["x", "y", "z", "vx", "vy", "vz"]]:
         if col in df_compare.columns and np.all(np.abs(df_compare[col])) < 1e-9:
             df_compare = df_compare.drop(columns=col)
@@ -1057,8 +1058,9 @@ def test_new_family(df_compare: pd.DataFrame, colormap="rainbow"):
     filenames = [
         file.removesuffix(".csv")
         for file in os.listdir(root)
-        if file.endswith("csv") and ("Horseshoe" in file)
+        if file.endswith("csv")
     ]
+    filenames = [file for file in filenames if keyword is None or keyword in file]
     vals_dict = {}
     for fname in filenames:
         path = root + fname + ".csv"
@@ -1149,6 +1151,7 @@ def family_slider(
     flip_vert: bool = False,
     flip_horiz: bool = False,
     n_arrow: int = 0,
+    density:int = 5,
     port: int = 8050,
     color="white",
 ):
@@ -1343,8 +1346,7 @@ def family_slider(
                 autorange=False,
             ),
         )
-        print("???")
-
+        
     # Dash dropdowns
 
     app = Dash()
@@ -1370,7 +1372,7 @@ def family_slider(
         X, _, _ = dc_overconstrained(Xg, targ.f_df_stm, targ_tol, debug=False)
         x0 = targ.get_x0(X)
         tf = targ.get_period(X)
-        xyz = prop(x0, tf, mu=mu, int_tol=int_tol, density_mult=n_arrow)
+        xyz = prop(x0, tf, mu=mu, int_tol=int_tol, density_mult=n_arrow if n_arrow>0 else density)
         x, y, z = xyz[:3].astype(np.float32)
         xl = np.array([np.min(x), np.max(x)])
         yl = np.array([np.min(y), np.max(y)])

@@ -6,6 +6,21 @@ from numpy.typing import NDArray
 from typing import Tuple, List
 from abc import ABC, abstractmethod
 
+"""
+Targetter objects are used in family continuation, differential correction, and conversion between dynamical systems
+
+Each targetter has methods to get control variables (X) given initial state and period, and another pair of methods to go backward
+
+Targetters all have some way of getting the cost function and its Jacobian
+
+The aforementioned methods are all combined in f_df_stm, which takes a control variable (and possibly more args and kwargs) and
+return the cost function, its Jacobian, and STM. In family continuation, this is the only function that should be the only integration instance called.
+Some targetters (i.e. heterclinic targetter) are less standard, but still do have these methods
+
+Returns:
+    _type_: _description_
+"""
+
 
 class Targetter(ABC):
     @abstractmethod
@@ -475,26 +490,26 @@ class multi_shooter(Targetter):
             eom, (0.0, period), x0, self.int_tol, args=(self.mu,), dense_output=True
         )
         # ensure that num timesteps is divisible by num segments
-        xe, te = dop_interpolate(ts, xs.T, Fs, n_mult=self.nseg)
+        te, xe = dop_interpolate(ts, xs.T, Fs, n_mult=self.nseg)
         max_ind = len(ts) - 1  # maximum index to new list
         Xsi = []
         for jj in range(self.nseg):
             # get indices to access
-            i0 = jj * max_ind / self.nseg
-            i1 = (jj + 1) * max_ind / self.nseg
-            assert np.all([i0 == int(i0), i1 == int(i1)])
-            i0, i1 = int(i0), int(i1)
+            i0 = jj * max_ind
+            i1 = (jj + 1) * max_ind
 
             x0i = xe[:, i0]
             if jj == 0:
                 x0i = np.delete(x0i, self.ind_fixed)
-            dti = te[i1] - te[i0]
+            dti = te[i1] - te[i0] if jj < self.nseg - 1 else te[-1] - te[i0]
             Xsi.append(np.append(x0i, dti))
         return np.concat(Xsi)
 
     def get_x0_segment(self, X: NDArray, segment: int):
         # NOTE: segment is 0-indexed
-        i0 = 7 * (segment)  # Index of control variable to start
+        i0 = (
+            7 * (segment) - 1 if segment > 0 else 0
+        )  # Index of control variable to start
         i1 = 7 * (segment + 1) - 1  # idx of control variable to end (X0 is one smaller)
         Xsegment = X[i0:i1].copy()
         states = Xsegment[:-1]  # cut off time
@@ -535,7 +550,7 @@ class multi_shooter(Targetter):
             ind_xf = jj
             ind_x0 = (jj + 1) % self.nseg
             state_diff = xf_segments[ind_xf] - x0_segments[ind_x0]
-            if jj == self.nseg:
+            if jj == self.nseg - 1:
                 state_diff = np.delete(state_diff, self.ind_skip)
             f_segments.append(state_diff)
         return np.concat(f_segments)
@@ -546,27 +561,29 @@ class multi_shooter(Targetter):
         # eom0_segments: Tuple[NDArray],
         eomf_segments: Tuple[NDArray] | List[NDArray],
     ):
-        # WIP/TODO
         dF = np.zeros((6 * self.nseg, 7 * self.nseg), np.float64)
         for jj in range(self.nseg):
-            ind0_xf = 7 * (jj)
-            ind0_x0 = 7 * ((jj + 1) % self.nseg)
-            ind1_xf = 7 * (jj) + 7
-            ind1_x0 = 7 * ((jj + 1) % self.nseg) + 7
-            stm_part = np.hstack(stm_segments[jj], eomf_segments[jj][:, None])
+            ind0_xf = 6 * jj
+            ind0_x0 = 7 * jj
+            ind1_xf = 6 * jj + 6
+            ind1_x0 = 7 * jj + 7
+            stm_part = np.hstack((stm_segments[jj], eomf_segments[jj][:, None]))
             dF[ind0_xf:ind1_xf, ind0_x0:ind1_x0] = stm_part
-            dF[ind0_xf:ind1_xf, (ind0_x0 + 7) : (ind1_x0 + 7)] = -np.eye(6)
+            eyestart = 7 * ((jj + 1) % self.nseg)
+            eyeend = 7 * ((jj + 1) % self.nseg) + 6
+            dF[ind0_xf:ind1_xf, eyestart:eyeend] = -np.eye(6)
 
         dF = np.delete(dF, self.ind_fixed, 1)
         dF = np.delete(dF, self.ind_skip + 6 * (self.nseg - 1), 0)
         return dF
 
     def f_df_stm(self, X: NDArray):
-        # WIP/TODO
         x0s = self.get_x0s(X)
         tfs = self.get_dts(X)
+        xfs = []
         stms = []
         eomfs = []
+        stm_full = np.eye(6)
         for x0, tf in zip(x0s, tfs):
             sv0 = np.array([*x0, *np.eye(6).flatten()])
             ts, ys, _, _ = dop853(
@@ -577,10 +594,12 @@ class multi_shooter(Targetter):
             eomf = eom(ts[-1], xf, self.mu)
             stms.append(stm)
             eomfs.append(eomf)
+            xfs.append(xf)
+            stm_full @= stm
 
         dF = self.DF(stms, eomfs)
-        f = self.f(x0, xf)
-        return f, dF, stm
+        f = self.f(x0s, xfs)
+        return f, dF, stm_full
 
 
 def propagate_X(
