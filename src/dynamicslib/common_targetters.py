@@ -336,6 +336,9 @@ class spatial_period_fixed(Targetter):
             ]
         )
         return dF
+    
+    def get_period(self, X: NDArray) -> float:
+        return self.period
 
     def f(self, xf: NDArray):
         return np.array([xf[1], xf[-3], xf[-1]])
@@ -497,7 +500,7 @@ class multi_shooter(Targetter):
 
     def get_x0_segment(self, X: NDArray, segment: int):
         # NOTE: segment is 0-indexed
-        i0 = 7 * (segment) - 1 if segment > 0 else 0
+        i0 = 7 * (segment)
         i1 = 7 * (segment + 1)
         Xsegment = X[i0:i1].copy()
         states = Xsegment[:-1]  # cut off time
@@ -817,7 +820,7 @@ class multi_shooter_eq_time(Targetter):
         stm_segments: Tuple[NDArray] | List[NDArray],
         eomf_segments: Tuple[NDArray] | List[NDArray],
     ):
-        dF = np.zeros((7 * self.nseg-1, 7 * self.nseg), np.float64)
+        dF = np.zeros((7 * self.nseg - 1, 7 * self.nseg), np.float64)
         for jj in range(self.nseg):
             ind0_xf = 6 * jj
             ind0_x0 = 7 * jj
@@ -829,8 +832,8 @@ class multi_shooter_eq_time(Targetter):
             eyeend = 7 * ((jj + 1) % self.nseg) + 6
             dF[ind0_xf:ind1_xf, eyestart:eyeend] = -np.eye(6)
             if jj < self.nseg - 1:
-                dF[6 * self.nseg + jj, 7 * jj+6] = 1
-                dF[6 * self.nseg + jj, 7 * (jj+1)+6] = -1
+                dF[6 * self.nseg + jj, 7 * jj + 6] = 1
+                dF[6 * self.nseg + jj, 7 * (jj + 1) + 6] = -1
 
         dF = np.delete(dF, self.ind_fixed, 1)
         dF = np.delete(dF, self.ind_skip + 6 * (self.nseg - 1), 0)
@@ -874,6 +877,8 @@ def propagate_X(
 
 
 # %% Heteroclinic connections
+
+# IDEA: go to the point they meet, backprop from one, foreprop from the other
 
 
 # target full state contenuity

@@ -12,8 +12,11 @@ from numba import njit
 from scipy.signal import find_peaks
 from base64 import b64encode
 from dash import Dash, dcc, html, Input, Output, State, Patch, callback
+from dash.exceptions import PreventUpdate
 from dynamicslib.consts import muEM, LU, TU
-from dynamicslib.common import get_Lpts, prop, jacobi_constant
+from dynamicslib.common import get_Lpts, prop, jacobi_constant, eom
+from dynamicslib.integrate import dop853
+from dynamicslib.interpolate import dop_interpolate
 from dynamicslib.common_targetters import Targetter
 from dynamicslib.targeter import dc_overconstrained
 from plotly.subplots import make_subplots
@@ -336,7 +339,7 @@ def plotly_display(
             trj = xyzs_temp[ii]
             xyzs_temp[ii] = (trj[0][::-1], -trj[1][::-1], trj[2][::-1])
             if len(trj) > 3:
-                xyzs_temp[ii] += (trj[3][::-1], trj[4][::-1], trj[5][::-1])
+                xyzs_temp[ii] += (-trj[3][::-1], trj[4][::-1], -trj[5][::-1])
         xyzs = xyzs_temp
 
     # build dataframe
@@ -731,7 +734,7 @@ def hodographs(
                 x=data_x,
                 y=data_y,
                 name=f"{ix}, {iy}",
-                text = [id for id in df.index],
+                text=[id for id in df.index],
                 hoverinfo="x+y+text",
                 mode="lines+markers",
                 hoverlabel=dict(namelength=-1, bgcolor="black", font_color="white"),
@@ -1045,7 +1048,9 @@ def bifurcation_search(
         fig.write_html(html_save, include_plotlyjs="cdn")
 
 
-def test_new_family(df_compare: pd.DataFrame,keyword:str|None=None, colormap="rainbow"):
+def test_new_family(
+    df_compare: pd.DataFrame, keyword: str | None = None, colormap="rainbow"
+):
     for col in ["Initial " + state for state in ["x", "y", "z", "vx", "vy", "vz"]]:
         if col in df_compare.columns and np.all(np.abs(df_compare[col])) < 1e-9:
             df_compare = df_compare.drop(columns=col)
@@ -1054,11 +1059,11 @@ def test_new_family(df_compare: pd.DataFrame,keyword:str|None=None, colormap="ra
         "Spatial" if (("Initial z" in cols) or ("Initial vz" in cols)) else "Planar"
     )
 
-    root = f"{os.getcwd()}/database/"
+    root = os.getcwd() + "/"
+    if not root.endswith("database/"):
+        root += "database/"
     filenames = [
-        file.removesuffix(".csv")
-        for file in os.listdir(root)
-        if file.endswith("csv")
+        file.removesuffix(".csv") for file in os.listdir(root) if file.endswith("csv")
     ]
     filenames = [file for file in filenames if keyword is None or keyword in file]
     vals_dict = {}
@@ -1098,7 +1103,7 @@ def test_new_family(df_compare: pd.DataFrame,keyword:str|None=None, colormap="ra
     )
 
     n = len(vals_dict)
-    colors = px.colors.sample_colorscale(colormap, n)
+    colors = px.colors.sample_colorscale(colormap, n) if n > 1 else ["rgb(255,0,0)"]
     curves = [curve1]
     j = 0
     for name, dct in vals_dict.items():
@@ -1150,8 +1155,8 @@ def family_slider(
     figsize: tuple[float, float] | None = None,  # (900, 600),
     flip_vert: bool = False,
     flip_horiz: bool = False,
-    n_arrow: int = 0,
-    density:int = 5,
+    # n_arrow: int = 0,
+    density: int = 5,
     port: int = 8050,
     color="white",
 ):
@@ -1188,7 +1193,8 @@ def family_slider(
         full_dataframe["Initial vz"] *= -1
     if flip_horiz:
         full_dataframe["Initial y"] *= -1
-        full_dataframe["Initial vy"] *= -1
+        full_dataframe["Initial vx"] *= -1
+        full_dataframe["Initial vz"] *= -1
 
     # build dataframe
     df = full_dataframe[param_names].astype(np.float32)
@@ -1236,8 +1242,8 @@ def family_slider(
         )
         fig.add_trace(
             go.Scatter(
-                x=[-mu, 1-mu],
-                y=[0,0],
+                x=[-mu, 1 - mu],
+                y=[0, 0],
                 mode="markers",
                 text=["P1", "P2"],
                 hoverinfo="x+y+text",
@@ -1267,36 +1273,36 @@ def family_slider(
                 marker=dict(color="cyan"),
             )
         )
-    if n_arrow > 0:
-        if not is2d:
-            arrows = go.Cone(
-                x=[np.nan],
-                y=[np.nan],
-                z=[np.nan],
-                u=[np.nan],
-                v=[np.nan],
-                w=[np.nan],
-                anchor="center",
-                sizemode="raw",
-                sizeref=1 / 20,
-                colorscale=[color, color],
-                showscale=False,
-            )
-        else:
-            arrows = go.Scatter(
-                x=[np.nan],
-                y=[np.nan],
-                mode="markers",
-                hoverinfo="none",
-                marker=dict(
-                    color=color,
-                    symbol="triangle-up",
-                    size=15,
-                    angle=np.nan,
-                    standoff=7.5,
-                ),
-            )
-        fig.add_trace(arrows)
+    # if n_arrow > 0:
+    #     if not is2d:
+    #         arrows = go.Cone(
+    #             x=[np.nan],
+    #             y=[np.nan],
+    #             z=[np.nan],
+    #             u=[np.nan],
+    #             v=[np.nan],
+    #             w=[np.nan],
+    #             anchor="center",
+    #             sizemode="raw",
+    #             sizeref=1 / 20,
+    #             colorscale=[color, color],
+    #             showscale=False,
+    #         )
+    #     else:
+    #         arrows = go.Scatter(
+    #             x=[np.nan],
+    #             y=[np.nan],
+    #             mode="markers",
+    #             hoverinfo="none",
+    #             marker=dict(
+    #                 color=color,
+    #                 symbol="triangle-up",
+    #                 size=15,
+    #                 angle=np.nan,
+    #                 standoff=7.5,
+    #             ),
+    #         )
+    #     fig.add_trace(arrows)
 
     # set layout
     fig.update_layout(
@@ -1346,14 +1352,23 @@ def family_slider(
                 autorange=False,
             ),
         )
-        
+
     # Dash dropdowns
 
     app = Dash()
     app.layout = html.Div(
         [
             dcc.Graph(figure=fig, id="display"),
-            dcc.Slider(0.0, 1.0, 1e-3, value=s0 / smax,marks=None, included=False, updatemode='drag',id="slider"),
+            dcc.Slider(
+                0.0,
+                1.0,
+                1e-3,
+                value=s0 / smax,
+                marks=None,
+                included=False,
+                updatemode="drag",
+                id="slider",
+            ),
         ]
     )
 
@@ -1372,18 +1387,23 @@ def family_slider(
         X, _, _ = dc_overconstrained(Xg, targ.f_df_stm, targ_tol, debug=False)
         x0 = targ.get_x0(X)
         tf = targ.get_period(X)
-        xyz = prop(x0, tf, mu=mu, int_tol=int_tol, density_mult=n_arrow if n_arrow>0 else density)
+        xyz = prop(
+            x0,
+            tf,
+            mu=mu,
+            int_tol=int_tol,
+            density_mult=n_arrow if n_arrow > 0 else density,
+        )
         x, y, z = xyz[:3].astype(np.float32)
         xl = np.array([np.min(x), np.max(x)])
         yl = np.array([np.min(y), np.max(y)])
         zl = np.array([np.min(z), np.max(z)])
         lims = np.array([xl, yl, zl])
         ctrs = np.mean(lims, axis=1)
-        w = np.max(lims[:,1]-lims[:,0])
-        bounds = np.array([-w/2, w/2])
-        xl, yl, zl = (ctrs[:,None] + 1.5 * bounds[None, :])
+        w = np.max(lims[:, 1] - lims[:, 0])
+        bounds = np.array([-w / 2, w / 2])
+        xl, yl, zl = ctrs[:, None] + 1.5 * bounds[None, :]
 
-    
         patch.data[0].x = x
         patch.data[0].y = y
 
@@ -1392,48 +1412,644 @@ def family_slider(
             patch.layout.yaxis.range = yl
         else:
             patch.layout.scene.xaxis.range = xl
-            patch.layout.scene.yaxis.range =  yl
-            patch.layout.scene.zaxis.range =  zl
+            patch.layout.scene.yaxis.range = yl
+            patch.layout.scene.zaxis.range = zl
             patch.data[0].z = z
 
-        if n_arrow > 0:
-            N = xyz.shape[1]  # num points
-            # arclength for uniformly-ish spaced dots
-            arc = np.append(0, np.cumsum(np.linalg.norm(np.diff(xyz[:3], 1), axis=0)))
-            arc /= np.max(arc)
+        # if n_arrow > 0:
+        #     N = xyz.shape[1]  # num points
+        #     # arclength for uniformly-ish spaced dots
+        #     arc = np.append(0, np.cumsum(np.linalg.norm(np.diff(xyz[:3], 1), axis=0)))
+        #     arc /= np.max(arc)
 
-            where = np.interp(np.arange(n_arrow) / n_arrow, arc, np.arange(N))
+        #     where = np.interp(np.arange(n_arrow) / n_arrow, arc, np.arange(N))
 
-            # indices where to draw arrow/cone
-            inds = np.int32(np.round(where))
+        #     # indices where to draw arrow/cone
+        #     inds = np.int32(np.round(where))
 
-            vels = (
-                xyz[3:, inds] if len(xyz) > 3 else xyz[:, inds + 1] - xyz[:, inds]
-            )  # velocities
+        #     vels = (
+        #         xyz[3:, inds] if len(xyz) > 3 else xyz[:, inds + 1] - xyz[:, inds]
+        #     )  # velocities
 
-            # normalize
-            vels = np.array([vel / np.linalg.norm(vel) for vel in vels.T]).T
-            if not is2d:
-                # extract components
-                xc, yc, zc = xyz[:3, inds]
-                uc, vc, wc = vels
-                patch.data[-1].x = xc
-                patch.data[-1].y = yc
-                patch.data[-1].z = zc
-                patch.data[-1].u = uc
-                patch.data[-1].v = vc
-                patch.data[-1].w = wc
-            else:
-                xc, yc = xyz[:2, inds]
-                uc, vc = vels[:2]
-                angs = 90 - np.rad2deg(np.atan2(vc, uc))
+        #     # normalize
+        #     vels = np.array([vel / np.linalg.norm(vel) for vel in vels.T]).T
+        #     if not is2d:
+        #         # extract components
+        #         xc, yc, zc = xyz[:3, inds]
+        #         uc, vc, wc = vels
+        #         patch.data[-1].x = xc
+        #         patch.data[-1].y = yc
+        #         patch.data[-1].z = zc
+        #         patch.data[-1].u = uc
+        #         patch.data[-1].v = vc
+        #         patch.data[-1].w = wc
+        #     else:
+        #         xc, yc = xyz[:2, inds]
+        #         uc, vc = vels[:2]
+        #         angs = 90 - np.rad2deg(np.atan2(vc, uc))
 
-                patch.data[-1].marker.angle = angs
-                patch.data[-1].x = xc
-                patch.data[-1].y = yc
-        # TODO: rescale arrows too
+        #         patch.data[-1].marker.angle = angs
+        #         patch.data[-1].x = xc
+        #         patch.data[-1].y = yc
+        # # TODO: rescale arrows too
         sleep(1e-2)
         return patch
+
+    # print(ind0, s0 / smax)
+    print("COMPILING HELPERS...", end="")
+    update_curve(s0 / smax, fig)
+    print("\t\tCompiled")
+    app.run(debug=False, use_reloader=False, port=port)
+
+
+# def animation_slider(
+#     full_dataframe: pd.DataFrame,
+#     targ: Targetter,
+#     targ_tol: float = 1e-12,
+#     int_tol: float = 1e-13,
+#     mu: float = muEM,
+#     figsize: tuple[float, float] | None = None,  # (900, 600),
+#     flip_vert: bool = False,
+#     flip_horiz: bool = False,
+#     density: int = 5,
+#     port: int = 8050,
+#     color="white",
+#     n_time: int = 500,
+# ):
+#     """Displays a family using a Plotly figure
+
+#     Args:
+#         xyzs (List): prepropagated trajectory ((3 x Ni)_i for i in num trajectories)
+#         full_dataframe (pd.DataFrame): Dataframe of values. Must include indices at least.
+#         colormap (str, optional): What color map to use. Defaults to "rainbow".
+#         mu (float, optional): Mu value. Used to show the Lagrange points and primaries. Defaults to muEM.
+#         figsize (tuple[float, float], optional): Figure size (in pix? I think?). Defaults to (900, 600).
+#         port (int, optional): What port number to use. Don't reuse the same port for multiple plots. Defaults to 8050.
+#         flip_vert (bool, optional): Flip horizontally. Defaults to False.
+#         flip_horiz (bool, optional): Flip vertically. Defaults to False.
+#         n_arrow (int, optional): How many arrows per curve
+
+#     Returns:
+#         None
+#     """
+#     if "Index" in full_dataframe.columns:
+#         full_dataframe.set_index("Index")
+
+#     param_names = ["Initial " + dim for dim in ["x", "y", "z", "vx", "vy", "vz"]]
+#     param_names += ["Period", "Jacobi Constant"]
+#     for col in param_names:
+#         if col not in full_dataframe.columns:
+#             full_dataframe[col] = 0.0
+#     # do the flips
+#     if flip_vert:
+#         full_dataframe["Initial z"] *= -1
+#         full_dataframe["Initial vz"] *= -1
+#     if flip_horiz:
+#         full_dataframe["Initial y"] *= -1
+#         full_dataframe["Initial vx"] *= -1
+#         full_dataframe["Initial vz"] *= -1
+
+#     # build dataframe
+#     df = full_dataframe[param_names].astype(np.float32)
+#     df = df.drop_duplicates(subset=param_names, keep="first", ignore_index=False)
+#     vals = df[param_names[:-1]].values
+
+#     ind0 = np.searchsorted(df.index, 0)
+#     # arclength (parameterize by this)
+#     arclen = np.append(0, np.cumsum(np.linalg.norm(np.diff(vals, axis=0), axis=1)))
+#     smax = max(arclen)
+#     s0 = arclen[ind0]  # start here
+#     spline = CubicSpline(arclen, vals, axis=0)
+
+#     # PLOTTING
+#     # check whether it's planar (will use 2d plot if so)
+#     is2d = (
+#         np.max(np.abs(df["Initial z"].values)) < 1e-9
+#         and np.max(np.abs(df["Initial vz"].values)) < 1e-9
+#     )
+
+#     if not is2d:
+#         curve = plotly_curve(
+#             [np.nan], [np.nan], [np.nan], "", color=color, width=7, uid="traj"
+#         )
+#         dot = go.Scatter3d(
+#             x=[np.nan], y=[np.nan], z=[np.nan], mode="markers", marker=dict(color=color)
+#         )
+#     else:
+#         curve = plotly_curve_2d(
+#             [np.nan], [np.nan], "", color=color, width=1.5, uid="traj"
+#         )
+#         dot = go.Scatter(
+#             x=[np.nan], y=[np.nan], mode="markers", marker=dict(color=color)
+#         )
+
+#     # make a colorbar with nan data
+#     fig = go.Figure(data=[curve, dot])
+
+#     # draw primaries and Lagrange points
+#     Lpoints = get_Lpts(mu=mu)
+#     if is2d:
+#         fig.add_trace(
+#             go.Scatter(
+#                 x=Lpoints[0],
+#                 y=Lpoints[1],
+#                 mode="markers",
+#                 text=[f"L{jj+1}" for jj in range(5)],
+#                 hoverinfo="x+y+text",
+#                 marker=dict(color="magenta", size=4),
+#             )
+#         )
+#         fig.add_trace(
+#             go.Scatter(
+#                 x=[-mu, 1 - mu],
+#                 y=[0, 0],
+#                 mode="markers",
+#                 text=["P1", "P2"],
+#                 hoverinfo="x+y+text",
+#                 marker=dict(color="cyan"),
+#             )
+#         )
+#     else:
+#         fig.add_trace(
+#             go.Scatter3d(
+#                 x=Lpoints[0],
+#                 y=Lpoints[1],
+#                 z=0 * Lpoints[0],
+#                 text=[f"L{jj+1}" for jj in range(5)],
+#                 hoverinfo="x+y+text",
+#                 mode="markers",
+#                 marker=dict(color="magenta", size=4),
+#             )
+#         )
+#         fig.add_trace(
+#             go.Scatter3d(
+#                 x=[-mu, 1 - mu],
+#                 y=[0, 0],
+#                 z=[0, 0],
+#                 mode="markers",
+#                 text=["P1", "P2"],
+#                 hoverinfo="x+y+text",
+#                 marker=dict(color="cyan"),
+#             )
+#         )
+#     # set layout
+#     fig.update_layout(
+#         width=figsize[0] if figsize is not None else None,
+#         height=figsize[1] if figsize is not None else None,
+#         template="plotly_dark",
+#         showlegend=False,
+#         margin=dict(l=0, r=30, b=0, t=0),
+#         plot_bgcolor="#000000",
+#         paper_bgcolor="#000000",
+#     )
+#     # set axes
+#     if is2d:
+#         fig.update_layout(
+#             xaxis=dict(title="x [nd]", autorange=False, range=[-1, 1]),
+#             yaxis=dict(title="y [nd]", autorange=False, range=[-1, 1]),
+#         )
+#         fig.update_yaxes(scaleanchor="x", scaleratio=1, exponentformat="power")
+#         fig.update_xaxes(exponentformat="power")
+#     else:
+#         fig.update_scenes(
+#             xaxis=dict(
+#                 title="x [nd]",
+#                 showbackground=False,
+#                 showgrid=True,
+#                 zeroline=False,
+#                 exponentformat="power",
+#                 range=(-1, 1),
+#                 autorange=False,
+#             ),
+#             yaxis=dict(
+#                 title="y [nd]",
+#                 showbackground=False,
+#                 showgrid=True,
+#                 zeroline=False,
+#                 exponentformat="power",
+#                 range=(-1, 1),
+#                 autorange=False,
+#             ),
+#             zaxis=dict(
+#                 title="z [nd]",
+#                 showbackground=False,
+#                 showgrid=True,
+#                 zeroline=False,
+#                 exponentformat="power",
+#                 range=(-1, 1),
+#                 autorange=False,
+#             ),
+#         )
+
+#     fig.update_layout(
+#         updatemenus=[
+#             dict(
+#                 type="buttons",
+#                 bgcolor="#FFFFFF",  # Background color of buttons
+#                 bordercolor="#555555",  # Border color of the menu container
+#                 font=dict(color="#333333"),  # Font color of buttons
+#                 buttons=[
+#                     dict(
+#                         args=[
+#                             None,
+#                             {
+#                                 "frame": {"duration": 0, "redraw": False},
+#                                 "fromcurrent": False,
+#                                 "transition": {"duration": 0},
+#                             },
+#                         ],
+#                         label="Play",
+#                         method="animate",
+#                     ),
+#                     dict(
+#                         label="Pause",
+#                         method="animate",
+#                         args=[[None], {"mode": "immediate"}],
+#                     ),
+#                 ],
+#             )
+#         ]
+#     )
+
+#     # fig.show()
+
+#     # Dash dropdowns
+
+#     app = Dash()
+#     app.layout = html.Div(
+#         [
+#             dcc.Graph(figure=fig, id="display"),
+#             dcc.Slider(
+#                 0.0,
+#                 1.0,
+#                 1e-3,
+#                 value=s0 / smax,
+#                 marks=None,
+#                 included=False,
+#                 updatemode="drag",
+#                 id="slider",
+#             ),
+#         ]
+#     )
+
+#     @callback(
+#         Output("display", "figure", allow_duplicate=False),
+#         Input("slider", "value"),
+#         State("display", "figure"),
+#         prevent_initial_call=False,
+#     )
+#     def update_curve(value, fig):
+#         patch = Patch()
+#         # updated_fig = go.Figure(fig)
+#         point = spline(value * smax)  # CALL THIS
+#         x0, tf = point[:6], point[-1]
+#         Xg = targ.get_X(x0, tf)
+#         X, _, _ = dc_overconstrained(Xg, targ.f_df_stm, targ_tol, debug=False)
+#         x0 = targ.get_x0(X)
+#         tf = targ.get_period(X)
+#         ts, xs1, (_, Fs), _ = dop853(
+#             eom, (0.0, tf), x0, int_tol, args=(mu,), dense_output=True
+#         )
+#         _, xyz = dop_interpolate(ts, xs1.T, Fs, n_mult=density)
+#         _, xyze = dop_interpolate(ts, xs1.T, Fs, t_eval=np.linspace(0, tf, n_time))
+
+#         x, y, z = xyz[:3].astype(np.float32)
+#         xl = np.array([np.min(x), np.max(x)])
+#         yl = np.array([np.min(y), np.max(y)])
+#         zl = np.array([np.min(z), np.max(z)])
+#         lims = np.array([xl, yl, zl])
+#         ctrs = np.mean(lims, axis=1)
+#         w = np.max(lims[:, 1] - lims[:, 0])
+#         bounds = np.array([-w / 2, w / 2])
+#         xl, yl, zl = ctrs[:, None] + 1.5 * bounds[None, :]
+
+#         patch.data[0].x = x
+#         patch.data[0].y = y
+#         patch.data[1].x = [x[0]]
+#         patch.data[1].y = [y[0]]
+
+#         if is2d:
+#             patch.layout.xaxis.range = xl
+#             patch.layout.yaxis.range = yl
+#             patch.frames = [
+#                 go.Frame(data=[go.Scatter(x=[xx], y=[yy])], traces=[1])
+#                 for xx, yy in xyze[:2].T
+#             ]
+#         else:
+#             patch.layout.scene.xaxis.range = xl
+#             patch.layout.scene.yaxis.range = yl
+#             patch.layout.scene.zaxis.range = zl
+#             patch.data[0].z = z
+#             patch.data[1].z = [z[0]]
+#             patch.frames = [
+#                 go.Frame(
+#                     name=f"f{k}",
+#                     data=[go.Scatter3d(x=[xx], y=[yy], z=[zz])],
+#                     traces=[1],
+#                 )
+#                 for k, (xx, yy, zz) in enumerate(xyze[:3].T)
+#             ]
+
+#         return patch
+
+#     # print(ind0, s0 / smax)
+#     print("COMPILING HELPERS...", end="")
+#     update_curve(s0 / smax, fig)
+#     print("\t\tCompiled")
+#     app.run(debug=False, use_reloader=False, port=port)
+
+
+def animation_slider(
+    full_dataframe: pd.DataFrame,
+    targ: Targetter,
+    targ_tol: float = 1e-12,
+    int_tol: float = 1e-13,
+    mu: float = muEM,
+    figsize: tuple[float, float] | None = None,  # (900, 600),
+    flip_vert: bool = False,
+    flip_horiz: bool = False,
+    density: int = 5,
+    port: int = 8050,
+    color="white",
+    n_time: int = 100,
+    framerate=20,
+):
+    """Displays a family using a Plotly figure
+
+    Args:
+        xyzs (List): prepropagated trajectory ((3 x Ni)_i for i in num trajectories)
+        full_dataframe (pd.DataFrame): Dataframe of values. Must include indices at least.
+        colormap (str, optional): What color map to use. Defaults to "rainbow".
+        mu (float, optional): Mu value. Used to show the Lagrange points and primaries. Defaults to muEM.
+        figsize (tuple[float, float], optional): Figure size (in pix? I think?). Defaults to (900, 600).
+        port (int, optional): What port number to use. Don't reuse the same port for multiple plots. Defaults to 8050.
+        flip_vert (bool, optional): Flip horizontally. Defaults to False.
+        flip_horiz (bool, optional): Flip vertically. Defaults to False.
+        n_arrow (int, optional): How many arrows per curve
+
+    Returns:
+        None
+    """
+    if "Index" in full_dataframe.columns:
+        full_dataframe.set_index("Index")
+
+    param_names = ["Initial " + dim for dim in ["x", "y", "z", "vx", "vy", "vz"]]
+    param_names += ["Period", "Jacobi Constant"]
+    for col in param_names:
+        if col not in full_dataframe.columns:
+            full_dataframe[col] = 0.0
+    # do the flips
+    if flip_vert:
+        full_dataframe["Initial z"] *= -1
+        full_dataframe["Initial vz"] *= -1
+    if flip_horiz:
+        full_dataframe["Initial y"] *= -1
+        full_dataframe["Initial vx"] *= -1
+        full_dataframe["Initial vz"] *= -1
+
+    # build dataframe
+    df = full_dataframe[param_names].astype(np.float32)
+    df = df.drop_duplicates(subset=param_names, keep="first", ignore_index=False)
+    vals = df[param_names[:-1]].values
+
+    ind0 = np.searchsorted(df.index, 0)
+    # arclength (parameterize by this)
+    arclen = np.append(0, np.cumsum(np.linalg.norm(np.diff(vals, axis=0), axis=1)))
+    smax = max(arclen)
+    s0 = arclen[ind0]  # start here
+    spline = CubicSpline(arclen, vals, axis=0)
+
+    # PLOTTING
+    # check whether it's planar (will use 2d plot if so)
+    is2d = (
+        np.max(np.abs(df["Initial z"].values)) < 1e-9
+        and np.max(np.abs(df["Initial vz"].values)) < 1e-9
+    )
+
+    if not is2d:
+        curve = plotly_curve(
+            [np.nan], [np.nan], [np.nan], "", color=color, width=7, uid="traj"
+        )
+        dot = go.Scatter3d(
+            x=[np.nan], y=[np.nan], z=[np.nan], mode="markers", marker=dict(color=color)
+        )
+    else:
+        curve = plotly_curve_2d(
+            [np.nan], [np.nan], "", color=color, width=1.5, uid="traj"
+        )
+        dot = go.Scatter(
+            x=[np.nan], y=[np.nan], mode="markers", marker=dict(color=color)
+        )
+
+    # make a colorbar with nan data
+    fig = go.Figure(data=[curve, dot])
+
+    # draw primaries and Lagrange points
+    Lpoints = get_Lpts(mu=mu)
+    if is2d:
+        fig.add_trace(
+            go.Scatter(
+                x=Lpoints[0],
+                y=Lpoints[1],
+                mode="markers",
+                text=[f"L{jj+1}" for jj in range(5)],
+                hoverinfo="x+y+text",
+                marker=dict(color="magenta", size=4),
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=[-mu, 1 - mu],
+                y=[0, 0],
+                mode="markers",
+                text=["P1", "P2"],
+                hoverinfo="x+y+text",
+                marker=dict(color="cyan"),
+            )
+        )
+    else:
+        fig.add_trace(
+            go.Scatter3d(
+                x=Lpoints[0],
+                y=Lpoints[1],
+                z=0 * Lpoints[0],
+                text=[f"L{jj+1}" for jj in range(5)],
+                hoverinfo="x+y+text",
+                mode="markers",
+                marker=dict(color="magenta", size=4),
+            )
+        )
+        fig.add_trace(
+            go.Scatter3d(
+                x=[-mu, 1 - mu],
+                y=[0, 0],
+                z=[0, 0],
+                mode="markers",
+                text=["P1", "P2"],
+                hoverinfo="x+y+text",
+                marker=dict(color="cyan"),
+            )
+        )
+    # set layout
+    fig.update_layout(
+        width=figsize[0] if figsize is not None else None,
+        height=figsize[1] if figsize is not None else None,
+        template="plotly_dark",
+        showlegend=False,
+        margin=dict(l=0, r=30, b=0, t=0),
+        plot_bgcolor="#000000",
+        paper_bgcolor="#000000",
+    )
+    # set axes
+    if is2d:
+        fig.update_layout(
+            xaxis=dict(title="x [nd]", autorange=False, range=[-1, 1]),
+            yaxis=dict(title="y [nd]", autorange=False, range=[-1, 1]),
+        )
+        fig.update_yaxes(scaleanchor="x", scaleratio=1, exponentformat="power")
+        fig.update_xaxes(exponentformat="power")
+    else:
+        fig.update_scenes(
+            xaxis=dict(
+                title="x [nd]",
+                showbackground=False,
+                showgrid=True,
+                zeroline=False,
+                exponentformat="power",
+                range=(-1, 1),
+                autorange=False,
+            ),
+            yaxis=dict(
+                title="y [nd]",
+                showbackground=False,
+                showgrid=True,
+                zeroline=False,
+                exponentformat="power",
+                range=(-1, 1),
+                autorange=False,
+            ),
+            zaxis=dict(
+                title="z [nd]",
+                showbackground=False,
+                showgrid=True,
+                zeroline=False,
+                exponentformat="power",
+                range=(-1, 1),
+                autorange=False,
+            ),
+        )
+        fig.update_layout(
+            scene=dict(
+                uirevision="camera",
+                # aspectmode="data",
+            )
+        )
+
+    # Dash dropdowns
+
+    app = Dash()
+    app.layout = html.Div(
+        [
+            dcc.Graph(figure=fig, id="display"),
+            dcc.Store(id="curve-store", storage_type="memory"),
+            dcc.Store(id="k-store", storage_type="memory"),
+            dcc.Slider(
+                0.0,
+                1.0,
+                1e-3,
+                value=s0 / smax,
+                marks=None,
+                included=False,
+                updatemode="drag",
+                id="slider",
+            ),
+            html.Button("Play / Pause", id="play"),
+            dcc.Interval(id="timer", interval=1000/framerate, disabled=True),
+        ]
+    )
+    
+    
+    @callback(
+        Output("display", "figure", allow_duplicate=True),
+        Output("k-store", "data", allow_duplicate=True),
+        Input("timer", "n_intervals"),
+        State("curve-store", "data"),
+        State("k-store", "data"),
+        prevent_initial_call=True,
+    )
+    def animate(_, curve, k):
+        if curve is None:
+            raise PreventUpdate
+
+        # print(curve[0][k])
+
+        n = len(curve)
+        k = (k + 1) % n
+
+        patch = Patch()
+        patch.data[1].x = [curve[k][0]]
+        patch.data[1].y = [curve[k][1]]
+        patch.data[1].z = [curve[k][2]]
+
+        return patch, k
+
+
+    @callback(
+        Output("curve-store", "data"),
+        Output("k-store", "data"),
+        Output("display", "figure", allow_duplicate=True),
+        Input("slider", "value"),
+        State("display", "figure"),
+        prevent_initial_call=True,
+    )
+    def update_curve(value, fig):
+        patch = Patch()
+        # updated_fig = go.Figure(fig)
+        point = spline(value * smax)  # CALL THIS
+        x0, tf = point[:6], point[-1]
+        Xg = targ.get_X(x0, tf)
+        X, _, _ = dc_overconstrained(Xg, targ.f_df_stm, targ_tol, debug=False)
+        x0 = targ.get_x0(X)
+        tf = targ.get_period(X)
+        ts, xs1, (_, Fs), _ = dop853(
+            eom, (0.0, tf), x0, int_tol, args=(mu,), dense_output=True
+        )
+        _, xyz = dop_interpolate(ts, xs1.T, Fs, n_mult=density)
+        _, xyze = dop_interpolate(ts, xs1.T, Fs, t_eval=np.linspace(0, tf, n_time,endpoint=False))
+
+        x, y, z = xyz[:3].astype(np.float32)
+        xl = np.array([np.min(x), np.max(x)])
+        yl = np.array([np.min(y), np.max(y)])
+        zl = np.array([np.min(z), np.max(z)])
+        lims = np.array([xl, yl, zl])
+        ctrs = np.mean(lims, axis=1)
+        w = np.max(lims[:, 1] - lims[:, 0])
+        bounds = np.array([-w / 2, w / 2])
+        xl, yl, zl = ctrs[:, None] + 1.5 * bounds[None, :]
+
+        patch.data[0].x = x
+        patch.data[0].y = y
+
+        if is2d:
+            patch.layout.xaxis.range = xl
+            patch.layout.yaxis.range = yl
+        else:
+            patch.layout.scene.xaxis.range = xl
+            patch.layout.scene.yaxis.range = yl
+            patch.layout.scene.zaxis.range = zl
+            patch.data[0].z = z
+
+        # animate(0, xyze[:3].T, 0)
+        return xyze[:3].T, 0, patch
+
+    @callback(
+        Output("timer", "disabled"),
+        Input("play", "n_clicks"),
+        State("timer", "disabled"),
+        prevent_initial_call=True,
+    )
+    def toggle(_, disabled):
+        return not disabled
 
     # print(ind0, s0 / smax)
     print("COMPILING HELPERS...", end="")

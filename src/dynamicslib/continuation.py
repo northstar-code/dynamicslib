@@ -187,12 +187,12 @@ def arclen_variable_step(
             # print(f"@S={arclen:.3f}: Failed step, decreasing step size and rejecting")
             # reject the last step
             s /= reduce_maxiter
-            dS = np.linalg.norm(Xs[-1] - Xs[-2])
-            arclen -= dS
-            bar.update(-dS)
-            Xs.pop()
-            X = Xs[-1]
-            tangent = tangent_prev
+            # dS = np.linalg.norm(Xs[-1] - Xs[-2])
+            # arclen -= dS
+            # bar.update(-dS)
+            # Xs.pop()
+            # X = Xs[-1]
+            # tangent = tangent_prev
             continue
         if arclen == 0.0:
             niters_prev = niters
