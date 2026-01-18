@@ -2029,6 +2029,8 @@ def animation_slider(
 
         patch.data[0].x = x
         patch.data[0].y = y
+        patch.data[1].x = [np.nan]
+        patch.data[1].y = [np.nan]
 
         if is2d:
             patch.layout.xaxis.range = xl
@@ -2038,6 +2040,7 @@ def animation_slider(
             patch.layout.scene.yaxis.range = yl
             patch.layout.scene.zaxis.range = zl
             patch.data[0].z = z
+            patch.data[1].z = [np.nan]
 
         # animate(0, xyze[:3].T, 0)
         return xyze[:3].T, 0, patch
