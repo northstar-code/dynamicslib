@@ -1409,7 +1409,7 @@ def gui(
         ),
         dbc.Col(
             html.Div([
-                html.H5("Num Periods (for inertial)"),
+                html.H5("Num Periods"),
                 dbc.Input(type="number", id="num-periods", min=1, max=10, step=1, value=1)
             ]),
             width=3
@@ -1635,7 +1635,7 @@ def gui2(
         None
     """
     filenames = [file.removesuffix(".csv") for file in os.listdir(db_path) if file.endswith(".csv")]
-    
+    filenames = ["Select Family"] + filenames
     thta = np.linspace(0, 2 * np.pi, 1000)
     curve = plotly_curve(
         [np.nan], [np.nan], [np.nan], color=color, width=2
@@ -1645,7 +1645,7 @@ def gui2(
         y=[np.nan],
         z=[np.nan],
         mode="markers",
-        marker=dict(color=color, size=5),
+        marker=dict(color=color, size=5)
     )
     bodycurve = go.Scatter3d(
         x=np.cos(thta),
@@ -1654,6 +1654,7 @@ def gui2(
         mode="lines",
         line=dict(dash='dash',color="grey", width=3),
         hoverinfo="none",
+        visible=False
     )
     bodyref = go.Scatter3d(
         x=[0],
@@ -1663,6 +1664,7 @@ def gui2(
         name="Central Body",
         hoverinfo="name",
         marker=dict(color="grey", size=5),
+        visible=False
     )
     bodyoth = go.Scatter3d(
         x=[np.nan],
@@ -1672,14 +1674,12 @@ def gui2(
         name="Other Body",
         hoverinfo="name",
         marker=dict(color="grey", size=5),
+        visible=False
     )
-    # make a colorbar with nan data
-    fig = go.Figure(data=[curve, dot, bodycurve, bodyref, bodyoth])
 
     # draw primaries and Lagrange points
     Lpoints = get_Lpts(mu=mu)
-    fig.add_trace(
-        go.Scatter3d(
+    Lpts = go.Scatter3d(
             x=Lpoints[0],
             y=Lpoints[1],
             z=0 * Lpoints[0],
@@ -1687,10 +1687,9 @@ def gui2(
             hoverinfo="x+y+text",
             mode="markers",
             marker=dict(color="magenta", size=4),
+            visible=True
         )
-    )
-    fig.add_trace(
-        go.Scatter3d(
+    bodies = go.Scatter3d(
             x=[-mu, 1 - mu],
             y=[0, 0],
             z=[0, 0],
@@ -1698,8 +1697,10 @@ def gui2(
             text=["P1", "P2"],
             hoverinfo="x+y+text",
             marker=dict(color="cyan"),
+            visible=True
         )
-    )
+    fig = go.Figure(data=[curve, dot, bodycurve, bodyref, bodyoth, Lpts, bodies])
+
     # set layout
     fig.update_layout(
         template="plotly_dark",
@@ -1750,57 +1751,65 @@ def gui2(
     app.layout = dbc.Container([
     dbc.Row([
         dbc.Col(
-            html.Div([html.H5("Family"), dbc.Select(filenames, "L1 Lyapunov", id="fam-dropdown")]),
+            html.Div([dbc.FormText("Family Name"), dbc.Select(filenames, "Select Family", id="fam-dropdown")]),
+            width=4
+        ),
+        dbc.Col(
+            html.Div([dbc.FormText("Flip Family"),html.Br(),
+                      dbc.Button("Horizontal", id="flip-h",size='sm'),dbc.Button("Vertical", id="flip-v",size='sm')
+                      ]),
+            width=2
+        ),
+        dbc.Col(html.Div([dbc.FormText("Select Within Family"),
+            dcc.Slider(0.0, 1.0, 1e-3, value=0, marks=None, included=False, updatemode="drag", id="slider")]),
             width=6
-        ),
-        dbc.Col(
-            html.Div([html.Br(), dbc.Button("Flip Horizontal", id="flip-h")]),
-            width=3
-        ),
-        dbc.Col(
-            html.Div([html.Br(), dbc.Button("Flip Vertical", id="flip-v")]),
-            width=3
-        ),
+        )
             
     ]),
-    
+
     dbc.Row([
         dbc.Col(
             html.Div([
-                html.H5("Animation Control"),
-                dbc.Button("Play / Pause", id="play")
-            ]),
-            width=3
-        ),
-        dbc.Col(
-            html.Div([
-                html.H5("Frame"),
+                dbc.FormText("Frame"),
                 dbc.Select(["CR3BP", "P1-Inertial", "P2-Inertial"], "CR3BP", id="frame-dropdown")
             ]),
-            width=3
+            width=2
         ),
         dbc.Col(
             html.Div([
-                html.H5("Num Periods (for inertial)"),
-                dbc.Input(type="number", id="num-periods", min=1, max=10, step=1, value=1)
+                dbc.FormText("Num Periods"),
+                dbc.Input(type="number", id="num-periods", min=1, max=25, step=1, value=1)
             ]),
-            width=3
+            width=2
         ),
-        dbc.Col(html.Div([html.H5("Speed"),
-                          dcc.Slider(1, 50, 1, value=5, marks=None, included=False, id="speed"),
-                        ]),
-            width=3
+        dbc.Col(html.Div([
+                dbc.FormText("Animation Speed"),
+                dcc.Slider(1, 50, 1, value=5, marks=None, included=False, id="speed")
+            ]),
+            width=2
         ),
+        dbc.Col(
+            html.Div([
+                dbc.FormText("Animate"), html.Br(),
+                dbc.Button("Play / Pause", id="play",style={"padding": "0px"}),
+            ]),
+            width=1
+        ),
+        
+        dbc.Col(
+            html.Div([
+                dbc.Card([html.Div(id="card-body-content", children="Initial Condition",style={'lineHeight': '0.0', 'fontFamily': 'Consolas, "Courier New", monospace'})],body=True)
+            ]),
+            width=5
+        ),
+        
     ]),
     
-    dbc.Row([
-        dbc.Col(html.Div([dcc.Slider(0.0, 1.0, 1e-3, value=0, marks=None, included=False, updatemode="drag", id="slider")]), width=12),
-    ]),    
     dbc.Row([
         dbc.Col(html.Div([dcc.Graph(figure=fig, id="display")]), width=12)
     ]),
 
-    html.Div([dcc.Store(id="curve-store", storage_type="memory"), 
+    html.Div([dcc.Store(id="curve-data", storage_type="memory"), 
     dcc.Store(id="k-store", storage_type="memory"), 
     dcc.Store(id="period-store", storage_type="memory"),
     dcc.Store(id="aux-data", storage_type="memory"),
@@ -1812,10 +1821,9 @@ def gui2(
     
     
     @callback(Output("aux-data", 'data',allow_duplicate=True), Output("slider", "value"), Input("fam-dropdown", "value"),prevent_initial_call=True)
-    def set_family_member(fam):
-        if 'aux data' is None:
+    def set_family(fam):
+        if fam is filenames[0]:
             raise PreventUpdate
-        print(fam)
         full_dataframe = pd.read_csv(db_path+fam+".csv")
         if "Index" in full_dataframe.columns:
             full_dataframe.set_index("Index")
@@ -1848,20 +1856,22 @@ def gui2(
         Output("display", "figure", allow_duplicate=True),
         Output("k-store", "data", allow_duplicate=True),
         Input("timer", "n_intervals"),
-        Input("speed", "value"),
-        Input("frame-dropdown", "value"),
-        State("curve-store", "data"),
-        State("period-store", "data"),
         State("k-store", "data"),
+        State("frame-dropdown", "value"),
+        State("speed", "value"),
+        State("curve-data", "data"),
         State("timer", "disabled"),
         prevent_initial_call=True,
     )
-    def animate(_, speed, frame, curve, period, k, paused):
-        if curve is None:
+    def animate(_, k,frame,speed, curvedata, paused):
+        if curvedata is None:
             raise PreventUpdate
         if paused:
             raise PreventUpdate
 
+        curve = curvedata['coords']
+        period = curvedata['period']
+        
         n = len(curve)
         k = k + speed
         k %= n
@@ -1911,9 +1921,9 @@ def gui2(
         return aux_data
 
     @callback(
-        Output("curve-store", "data",allow_duplicate=True),
+        Output("curve-data", "data",allow_duplicate=True),
         Output("k-store", "data"),
-        Output("period-store", "data"),
+        Output("card-body-content", "children"),
         Output("display", "figure", allow_duplicate=True),
         Input("slider", "value"),
         Input("frame-dropdown", "value"),
@@ -1922,7 +1932,7 @@ def gui2(
         State("display", "figure"),
         prevent_initial_call=True,
     )
-    def update_curve(s, frame, n_prds, aux_data, fig):
+    def update_curve_within_fam(s, frame, n_prds, aux_data, fig):
         if aux_data is None:
             raise PreventUpdate
         arclen, smax, s0, vals = aux_data = aux_data["arclen"], aux_data["smax"], aux_data["s0"], aux_data["vals"]
@@ -1931,7 +1941,6 @@ def gui2(
         spline = CubicSpline(arclen, vals, axis=0)
         
         patch = Patch()
-        # print("UPDATE")
         point = spline(s * smax)
         x0, tf = point[:6], point[-1]
         Xg = targ.get_X(x0, tf)
@@ -2012,10 +2021,14 @@ def gui2(
         patch.data[0].z = z
         patch.data[1].z = [0]
         patch.data[4].z = [0]
-
-        # print("FINISH")
-
-        return xyze[:3].T, 0, tf, patch
+        
+        jc = jacobi_constant(x0)
+        curve_data = dict(coords=xyze[:3].T,period=tf, jacobi=jc)
+        
+        displaydata = [html.P("x0: ["+", ".join([f"{x:.7f}" for x in x0[:3]])+"]"), 
+                       html.P("v0: ["+", ".join([f"{x:.7f}" for x in x0[3:]])+"]"), 
+                       html.P(f"Period: {tf:.7f}, JC: {jc:.6f}")]
+        return curve_data, 0, displaydata, patch
 
     @callback(
         Output("timer", "disabled"),
@@ -2027,7 +2040,12 @@ def gui2(
         return not disabled
     
     print("COMPILING HELPERS...", end="")
+    
+    data, s0 = set_family("L1 Halo") # this will force compile
+    _ = update_curve_within_fam(s0, "P2-Inertial", 1, data, fig) # this will force compile
+    
     print("\t\tCompiled")
+    
     app.run(debug=debug, use_reloader=False, jupyter_mode="inline", port=port)
 
 
