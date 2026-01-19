@@ -1147,310 +1147,6 @@ def test_new_family(
     fig.show(config=config)
 
 
-def animation_slider(
-    full_dataframe: pd.DataFrame,
-    targ: Targetter,
-    targ_tol: float = 1e-12,
-    int_tol: float = 1e-13,
-    mu: float = muEM,
-    figsize: tuple[float, float] | None = None,  # (900, 600),
-    flip_vert: bool = False,
-    flip_horiz: bool = False,
-    density: int = 5,
-    port: int = 8050,
-    color="white",
-    n_time: int = 100,
-    framerate=20,
-):
-    """Displays an animatable figure in either 2D or 3D of an individual member of the selected family.
-    A slider controls coarse initial state estimate, and the passed targetter is used to converge. A button
-    allows an animated dot to move around the plot
-
-    Args:
-        xyzs (List): prepropagated trajectory ((3 x Ni)_i for i in num trajectories)
-        full_dataframe (pd.DataFrame): Dataframe of values. Must include indices at least.
-        colormap (str, optional): What color map to use. Defaults to "rainbow".
-        mu (float, optional): Mu value. Used to show the Lagrange points and primaries. Defaults to muEM.
-        figsize (tuple[float, float], optional): Figure size (in pix? I think?). Defaults to (900, 600).
-        port (int, optional): What port number to use. Don't reuse the same port for multiple plots. Defaults to 8050.
-        flip_vert (bool, optional): Flip horizontally. Defaults to False.
-        flip_horiz (bool, optional): Flip vertically. Defaults to False.
-        n_arrow (int, optional): How many arrows per curve
-
-    Returns:
-        None
-    """
-    if "Index" in full_dataframe.columns:
-        full_dataframe.set_index("Index")
-
-    param_names = ["Initial " + dim for dim in ["x", "y", "z", "vx", "vy", "vz"]]
-    param_names += ["Period", "Jacobi Constant"]
-    for col in param_names:
-        if col not in full_dataframe.columns:
-            full_dataframe[col] = 0.0
-    # do the flips
-    if flip_vert:
-        full_dataframe["Initial z"] *= -1
-        full_dataframe["Initial vz"] *= -1
-    if flip_horiz:
-        full_dataframe["Initial y"] *= -1
-        full_dataframe["Initial vx"] *= -1
-        full_dataframe["Initial vz"] *= -1
-
-    # build dataframe
-    df = full_dataframe[param_names].astype(np.float32)
-    df = df.drop_duplicates(subset=param_names, keep="first", ignore_index=False)
-    vals = df[param_names[:-1]].values
-
-    ind0 = np.searchsorted(df.index, 0)
-    # arclength (parameterize by this)
-    arclen = np.append(0, np.cumsum(np.linalg.norm(np.diff(vals, axis=0), axis=1)))
-    smax = max(arclen)
-    s0 = arclen[ind0]  # start here
-    spline = CubicSpline(arclen, vals, axis=0)
-
-    # PLOTTING
-    # check whether it's planar (will use 2d plot if so)
-    is2d = (
-        np.max(np.abs(df["Initial z"].values)) < 1e-9
-        and np.max(np.abs(df["Initial vz"].values)) < 1e-9
-    )
-
-    if not is2d:
-        curve = plotly_curve(
-            [np.nan], [np.nan], [np.nan], "", color=color, width=7, uid="traj"
-        )
-        dot = go.Scatter3d(
-            x=[np.nan], y=[np.nan], z=[np.nan], mode="markers", marker=dict(color=color)
-        )
-    else:
-        curve = plotly_curve_2d(
-            [np.nan], [np.nan], "", color=color, width=1.5, uid="traj"
-        )
-        dot = go.Scatter(
-            x=[np.nan], y=[np.nan], mode="markers", marker=dict(color=color)
-        )
-
-    # make a colorbar with nan data
-    fig = go.Figure(data=[curve, dot])
-
-    # draw primaries and Lagrange points
-    Lpoints = get_Lpts(mu=mu)
-    if is2d:
-        fig.add_trace(
-            go.Scatter(
-                x=Lpoints[0],
-                y=Lpoints[1],
-                mode="markers",
-                text=[f"L{jj+1}" for jj in range(5)],
-                hoverinfo="x+y+text",
-                marker=dict(color="magenta", size=4),
-            )
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=[-mu, 1 - mu],
-                y=[0, 0],
-                mode="markers",
-                text=["P1", "P2"],
-                hoverinfo="x+y+text",
-                marker=dict(color="cyan"),
-            )
-        )
-    else:
-        fig.add_trace(
-            go.Scatter3d(
-                x=Lpoints[0],
-                y=Lpoints[1],
-                z=0 * Lpoints[0],
-                text=[f"L{jj+1}" for jj in range(5)],
-                hoverinfo="x+y+text",
-                mode="markers",
-                marker=dict(color="magenta", size=4),
-            )
-        )
-        fig.add_trace(
-            go.Scatter3d(
-                x=[-mu, 1 - mu],
-                y=[0, 0],
-                z=[0, 0],
-                mode="markers",
-                text=["P1", "P2"],
-                hoverinfo="x+y+text",
-                marker=dict(color="cyan"),
-            )
-        )
-    # set layout
-    fig.update_layout(
-        width=figsize[0] if figsize is not None else None,
-        height=figsize[1] if figsize is not None else None,
-        template="plotly_dark",
-        showlegend=False,
-        margin=dict(l=0, r=30, b=0, t=0),
-        plot_bgcolor="#000000",
-        paper_bgcolor="#000000",
-    )
-    # set axes
-    if is2d:
-        fig.update_layout(
-            xaxis=dict(title="x [nd]", autorange=False, range=[-1, 1]),
-            yaxis=dict(title="y [nd]", autorange=False, range=[-1, 1]),
-        )
-        fig.update_yaxes(scaleanchor="x", scaleratio=1, exponentformat="power")
-        fig.update_xaxes(exponentformat="power")
-    else:
-        fig.update_scenes(
-            xaxis=dict(
-                title="x [nd]",
-                showbackground=False,
-                showgrid=True,
-                zeroline=False,
-                exponentformat="power",
-                range=(-1, 1),
-                autorange=False,
-            ),
-            yaxis=dict(
-                title="y [nd]",
-                showbackground=False,
-                showgrid=True,
-                zeroline=False,
-                exponentformat="power",
-                range=(-1, 1),
-                autorange=False,
-            ),
-            zaxis=dict(
-                title="z [nd]",
-                showbackground=False,
-                showgrid=True,
-                zeroline=False,
-                exponentformat="power",
-                range=(-1, 1),
-                autorange=False,
-            ),
-        )
-        fig.update_layout(
-            scene=dict(
-                uirevision="camera",
-                # aspectmode="data",
-            )
-        )
-
-    # Dash dropdowns
-
-    app = Dash()
-    app.layout = html.Div(
-        [
-            dcc.Graph(figure=fig, id="display"),
-            dcc.Store(id="curve-store", storage_type="memory"),
-            dcc.Store(id="k-store", storage_type="memory"),
-            dcc.Slider(
-                0.0,
-                1.0,
-                1e-3,
-                value=s0 / smax,
-                marks=None,
-                included=False,
-                updatemode="drag",
-                id="slider",
-            ),
-            html.Button("Play / Pause", id="play"),
-            dcc.Interval(id="timer", interval=1000 / framerate, disabled=True),
-        ]
-    )
-
-    @callback(
-        Output("display", "figure", allow_duplicate=True),
-        Output("k-store", "data", allow_duplicate=True),
-        Input("timer", "n_intervals"),
-        State("curve-store", "data"),
-        State("k-store", "data"),
-        prevent_initial_call=True,
-    )
-    def animate(_, curve, k):
-        if curve is None:
-            raise PreventUpdate
-
-        n = len(curve)
-        k = (k + 1) % n
-
-        patch = Patch()
-        patch.data[1].x = [curve[k][0]]
-        patch.data[1].y = [curve[k][1]]
-        patch.data[1].z = [curve[k][2]]
-
-        return patch, k
-
-    @callback(
-        Output("curve-store", "data"),
-        Output("k-store", "data"),
-        Output("display", "figure", allow_duplicate=True),
-        Input("slider", "value"),
-        State("display", "figure"),
-        prevent_initial_call=True,
-    )
-    def update_curve(value, fig):
-        patch = Patch()
-        # updated_fig = go.Figure(fig)
-        point = spline(value * smax)  # CALL THIS
-        x0, tf = point[:6], point[-1]
-        Xg = targ.get_X(x0, tf)
-        X, _, _ = dc_overconstrained(Xg, targ.f_df_stm, targ_tol, debug=False)
-        x0 = targ.get_x0(X)
-        tf = targ.get_period(X)
-        ts, xs1, (_, Fs), _ = dop853(
-            eom, (0.0, tf), x0, int_tol, args=(mu,), dense_output=True
-        )
-        _, xyz = dop_interpolate(ts, xs1.T, Fs, n_mult=density)
-        _, xyze = dop_interpolate(
-            ts, xs1.T, Fs, t_eval=np.linspace(0, tf, n_time, endpoint=False)
-        )
-
-        x, y, z = xyz[:3].astype(np.float32)
-        xl = np.array([np.min(x), np.max(x)])
-        yl = np.array([np.min(y), np.max(y)])
-        zl = np.array([np.min(z), np.max(z)])
-        lims = np.array([xl, yl, zl])
-        ctrs = np.mean(lims, axis=1)
-        w = np.max(lims[:, 1] - lims[:, 0])
-        bounds = np.array([-w / 2, w / 2])
-        xl, yl, zl = ctrs[:, None] + 1.5 * bounds[None, :]
-
-        patch.data[0].x = x
-        patch.data[0].y = y
-        patch.data[1].x = [np.nan]
-        patch.data[1].y = [np.nan]
-
-        if is2d:
-            patch.layout.xaxis.range = xl
-            patch.layout.yaxis.range = yl
-        else:
-            patch.layout.scene.xaxis.range = xl
-            patch.layout.scene.yaxis.range = yl
-            patch.layout.scene.zaxis.range = zl
-            patch.data[0].z = z
-            patch.data[1].z = [np.nan]
-
-        # animate(0, xyze[:3].T, 0)
-        return xyze[:3].T, 0, patch
-
-    @callback(
-        Output("timer", "disabled"),
-        Input("play", "n_clicks"),
-        State("timer", "disabled"),
-        prevent_initial_call=True,
-    )
-    def pauseplay(_, disabled):
-        return not disabled
-
-    # TODO: dropdown for the frame to use (ECI/ECEF/CR3BP)
-    # TODO: dropdown for family?
-
-    print("COMPILING HELPERS...", end="")
-    update_curve(s0 / smax, fig)
-    print("\t\tCompiled")
-    app.run(debug=False, use_reloader=False, port=port)
-
-
 def gui(
     full_dataframe: pd.DataFrame,
     targ: Targetter,
@@ -1463,7 +1159,7 @@ def gui(
     density: int = 5,
     port: int = 8050,
     color="white",
-    n_time: int = 100,
+    n_time: int = 500,
     framerate=20,
 ):
     """Displays an animatable figure in either 2D or 3D of an individual member of the selected family.
@@ -1694,87 +1390,72 @@ def gui(
     # app = Dash()
     app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.themes.CYBORG])
     
+    #fmt: off
     app.layout = dbc.Container([
     dbc.Row([
         dbc.Col(
             html.Div([
-                html.H3("Animation Control"),
+                html.H5("Animation Control"),
                 dbc.Button("Play / Pause", id="play")
             ]),
             width=3
         ),
         dbc.Col(
             html.Div([
-                html.H3("Frame"),
-                # dcc.Dropdown(["CR3BP", "P1-Inertial", "P2-Inertial"], "CR3BP", id="frame-dropdown")
+                html.H5("Frame"),
                 dbc.Select(["CR3BP", "P1-Inertial", "P2-Inertial"], "CR3BP", id="frame-dropdown")
-            ]),
-            width=6
-        ),
-        dbc.Col(
-            html.Div([
-                html.H3("Period Control"),
-                dcc.Input(type="number", id="num-periods", min=1, max=10, step=1, value=1)
             ]),
             width=3
         ),
-    ]),
-        
-    dbc.Row([
-        dbc.Col(html.Div([dcc.Graph(figure=fig, id="display")]), width=12),
+        dbc.Col(
+            html.Div([
+                html.H5("Num Periods (for inertial)"),
+                dbc.Input(type="number", id="num-periods", min=1, max=10, step=1, value=1)
+            ]),
+            width=3
+        ),
+        dbc.Col(html.Div([html.H5("Speed"),
+                          dcc.Slider(1, 50, 1, value=5, marks=None, included=False, id="speed"),
+                        ]),
+            width=3
+        ),
     ]),
     
     dbc.Row([
         dbc.Col(html.Div([dcc.Slider(0.0, 1.0, 1e-3, value=s0 / smax, marks=None, included=False, updatemode="drag", id="slider")]), width=12),
-    ]),
+    ]),    
     dbc.Row([
-        dbc.Col(
-            html.Div([dcc.Store(id="curve-store", storage_type="memory")]),
-            width=3
-        ),
-        dbc.Col(
-            html.Div([dcc.Store(id="k-store", storage_type="memory")]),
-            width=3
-        ),
-        dbc.Col(
-            html.Div([dcc.Store(id="period-store", storage_type="memory")]),
-            width=3
-        ),
-        dbc.Col(
-            html.Div([dcc.Interval(id="timer", interval=1000 / framerate, disabled=True)]),
-            width=3
-        ),
+        dbc.Col(html.Div([dcc.Graph(figure=fig, id="display")]), width=12)
     ]),
-    
-    # html.Div(
-    #     [
-    #         ,
-    #         ,
-    #         ,
-    #         ,
-    #     ]
-    # )
-], fluid=True)
+
+    html.Div([dcc.Store(id="curve-store", storage_type="memory"), 
+    dcc.Store(id="k-store", storage_type="memory"), 
+    dcc.Store(id="period-store", storage_type="memory"),
+    dcc.Interval(id="timer", interval=1000 / framerate, disabled=True)])
+    ], fluid=True)
+    # fmt: on
     
 
     @callback(
         Output("display", "figure", allow_duplicate=True),
         Output("k-store", "data", allow_duplicate=True),
         Input("timer", "n_intervals"),
+        Input("speed", "value"),
         Input("frame-dropdown", "value"),
         State("curve-store", "data"),
         State("period-store", "data"),
-        Input("num-periods", "value"),
         State("k-store", "data"),
+        State("timer", "disabled"),
         prevent_initial_call=True,
     )
-    def animate(_, frame, curve, period, num_periods, k):
-        # print("ANIMATE")
+    def animate(_, speed, frame, curve, period, k, paused):
         if curve is None:
+            raise PreventUpdate
+        if paused:
             raise PreventUpdate
 
         n = len(curve)
-        k = k + 1
+        k = k + speed
         k %= n
 
         patch = Patch()
@@ -1918,7 +1599,437 @@ def gui(
     print("COMPILING HELPERS...", end="")
     update_curve(s0 / smax, "CR3BP", 1, fig)
     print("\t\tCompiled")
-    app.run(debug=True, use_reloader=False, jupyter_mode="inline", port=port)
+    app.run(debug=False, use_reloader=False, jupyter_mode="inline", port=port)
+    
+    
+
+def gui2(
+    db_path:str,
+    targ: Targetter,
+    targ_tol: float = 1e-4,
+    int_tol: float = 1e-13,
+    mu: float = muEM,
+    density: int = 5,
+    port: int = 8050,
+    color="white",
+    n_time: int = 500,
+    framerate=20,
+    debug:bool=False
+):
+    """Displays an animatable figure in either 2D or 3D of an individual member of the selected family.
+    A slider controls coarse initial state estimate, and the passed targetter is used to converge. A button
+    allows an animated dot to move around the plot
+
+    Args:
+        xyzs (List): prepropagated trajectory ((3 x Ni)_i for i in num trajectories)
+        full_dataframe (pd.DataFrame): Dataframe of values. Must include indices at least.
+        colormap (str, optional): What color map to use. Defaults to "rainbow".
+        mu (float, optional): Mu value. Used to show the Lagrange points and primaries. Defaults to muEM.
+        figsize (tuple[float, float], optional): Figure size (in pix? I think?). Defaults to (900, 600).
+        port (int, optional): What port number to use. Don't reuse the same port for multiple plots. Defaults to 8050.
+        flip_vert (bool, optional): Flip horizontally. Defaults to False.
+        flip_horiz (bool, optional): Flip vertically. Defaults to False.
+        n_arrow (int, optional): How many arrows per curve
+
+    Returns:
+        None
+    """
+    filenames = [file.removesuffix(".csv") for file in os.listdir(db_path) if file.endswith(".csv")]
+    
+    thta = np.linspace(0, 2 * np.pi, 1000)
+    curve = plotly_curve(
+        [np.nan], [np.nan], [np.nan], color=color, width=2
+    )
+    dot = go.Scatter3d(
+        x=[np.nan],
+        y=[np.nan],
+        z=[np.nan],
+        mode="markers",
+        marker=dict(color=color, size=5),
+    )
+    bodycurve = go.Scatter3d(
+        x=np.cos(thta),
+        y=np.sin(thta),
+        z=0 * thta,
+        mode="lines",
+        line=dict(dash='dash',color="grey", width=3),
+        hoverinfo="none",
+    )
+    bodyref = go.Scatter3d(
+        x=[0],
+        y=[0],
+        z=[0],
+        mode="markers",
+        name="Central Body",
+        hoverinfo="name",
+        marker=dict(color="grey", size=5),
+    )
+    bodyoth = go.Scatter3d(
+        x=[np.nan],
+        y=[np.nan],
+        z=[np.nan],
+        mode="markers",
+        name="Other Body",
+        hoverinfo="name",
+        marker=dict(color="grey", size=5),
+    )
+    # make a colorbar with nan data
+    fig = go.Figure(data=[curve, dot, bodycurve, bodyref, bodyoth])
+
+    # draw primaries and Lagrange points
+    Lpoints = get_Lpts(mu=mu)
+    fig.add_trace(
+        go.Scatter3d(
+            x=Lpoints[0],
+            y=Lpoints[1],
+            z=0 * Lpoints[0],
+            text=[f"L{jj+1}" for jj in range(5)],
+            hoverinfo="x+y+text",
+            mode="markers",
+            marker=dict(color="magenta", size=4),
+        )
+    )
+    fig.add_trace(
+        go.Scatter3d(
+            x=[-mu, 1 - mu],
+            y=[0, 0],
+            z=[0, 0],
+            mode="markers",
+            text=["P1", "P2"],
+            hoverinfo="x+y+text",
+            marker=dict(color="cyan"),
+        )
+    )
+    # set layout
+    fig.update_layout(
+        template="plotly_dark",
+        showlegend=False,
+        margin=dict(l=0, r=30, b=0, t=0),
+        plot_bgcolor="#000000",
+        paper_bgcolor="#000000",
+    )
+    # set axes
+
+    fig.update_scenes(
+        xaxis=dict(
+            title="x [nd]",
+            showbackground=False,
+            showgrid=True,
+            zeroline=False,
+            exponentformat="power",
+            range=(-1, 1),
+            autorange=False,
+        ),
+        yaxis=dict(
+            title="y [nd]",
+            showbackground=False,
+            showgrid=True,
+            zeroline=False,
+            exponentformat="power",
+            range=(-1, 1),
+            autorange=False,
+        ),
+        zaxis=dict(
+            title="z [nd]",
+            showbackground=False,
+            showgrid=True,
+            zeroline=False,
+            exponentformat="power",
+            range=(-1, 1),
+            autorange=False,
+        ),
+    )
+    fig.update_layout(scene=dict(uirevision="camera"))
+
+    # Dash dropdowns
+
+    # app = Dash()
+    app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.themes.CYBORG])
+    
+    #fmt: off
+    app.layout = dbc.Container([
+    dbc.Row([
+        dbc.Col(
+            html.Div([html.H5("Family"), dbc.Select(filenames, "L1 Lyapunov", id="fam-dropdown")]),
+            width=6
+        ),
+        dbc.Col(
+            html.Div([html.Br(), dbc.Button("Flip Horizontal", id="flip-h")]),
+            width=3
+        ),
+        dbc.Col(
+            html.Div([html.Br(), dbc.Button("Flip Vertical", id="flip-v")]),
+            width=3
+        ),
+            
+    ]),
+    
+    dbc.Row([
+        dbc.Col(
+            html.Div([
+                html.H5("Animation Control"),
+                dbc.Button("Play / Pause", id="play")
+            ]),
+            width=3
+        ),
+        dbc.Col(
+            html.Div([
+                html.H5("Frame"),
+                dbc.Select(["CR3BP", "P1-Inertial", "P2-Inertial"], "CR3BP", id="frame-dropdown")
+            ]),
+            width=3
+        ),
+        dbc.Col(
+            html.Div([
+                html.H5("Num Periods (for inertial)"),
+                dbc.Input(type="number", id="num-periods", min=1, max=10, step=1, value=1)
+            ]),
+            width=3
+        ),
+        dbc.Col(html.Div([html.H5("Speed"),
+                          dcc.Slider(1, 50, 1, value=5, marks=None, included=False, id="speed"),
+                        ]),
+            width=3
+        ),
+    ]),
+    
+    dbc.Row([
+        dbc.Col(html.Div([dcc.Slider(0.0, 1.0, 1e-3, value=0, marks=None, included=False, updatemode="drag", id="slider")]), width=12),
+    ]),    
+    dbc.Row([
+        dbc.Col(html.Div([dcc.Graph(figure=fig, id="display")]), width=12)
+    ]),
+
+    html.Div([dcc.Store(id="curve-store", storage_type="memory"), 
+    dcc.Store(id="k-store", storage_type="memory"), 
+    dcc.Store(id="period-store", storage_type="memory"),
+    dcc.Store(id="aux-data", storage_type="memory"),
+    dcc.Interval(id="timer", interval=1000 / framerate, disabled=True)])
+    ], fluid=True)
+    # fmt: on
+    
+    
+    
+    
+    @callback(Output("aux-data", 'data',allow_duplicate=True), Output("slider", "value"), Input("fam-dropdown", "value"),prevent_initial_call=True)
+    def set_family_member(fam):
+        if 'aux data' is None:
+            raise PreventUpdate
+        print(fam)
+        full_dataframe = pd.read_csv(db_path+fam+".csv")
+        if "Index" in full_dataframe.columns:
+            full_dataframe.set_index("Index")
+
+        param_names = ["Initial " + dim for dim in ["x", "y", "z", "vx", "vy", "vz"]]
+        param_names += ["Period", "Jacobi Constant"]
+        for col in param_names:
+            if col not in full_dataframe.columns:
+                full_dataframe[col] = 0.0
+
+        # build dataframe
+        df = full_dataframe[param_names].astype(np.float32)
+        df = df.drop_duplicates(subset=param_names, keep="first", ignore_index=False)
+        vals = df[param_names[:-1]].values
+        
+
+        ind0 = np.searchsorted(df.index, 0)
+        # arclength (parameterize by this)
+        arclen = np.append(0, np.cumsum(np.linalg.norm(np.diff(vals, axis=0), axis=1)))
+        smax = max(arclen)
+        s0 = arclen[ind0]  # start here
+        
+        aux_data = {"arclen":arclen, "smax":smax, "s0":s0, "vals":vals}
+        
+        return aux_data, s0
+
+
+
+    @callback(
+        Output("display", "figure", allow_duplicate=True),
+        Output("k-store", "data", allow_duplicate=True),
+        Input("timer", "n_intervals"),
+        Input("speed", "value"),
+        Input("frame-dropdown", "value"),
+        State("curve-store", "data"),
+        State("period-store", "data"),
+        State("k-store", "data"),
+        State("timer", "disabled"),
+        prevent_initial_call=True,
+    )
+    def animate(_, speed, frame, curve, period, k, paused):
+        if curve is None:
+            raise PreventUpdate
+        if paused:
+            raise PreventUpdate
+
+        n = len(curve)
+        k = k + speed
+        k %= n
+
+        patch = Patch()
+        patch.data[1].x = [curve[k][0]]
+        patch.data[1].y = [curve[k][1]]
+        patch.data[1].z = [curve[k][2]]
+        if frame == "P1-Inertial":
+            patch.data[4].x = [np.cos(k * period / n_time)]
+            patch.data[4].y = [np.sin(k * period / n_time)]
+        if frame == "P2-Inertial":
+            patch.data[4].x = [-np.cos(k * period / n_time)]
+            patch.data[4].y = [-np.sin(k * period / n_time)]
+
+        return patch, k
+    
+    @callback(
+        Output("aux-data", "data", allow_duplicate=True),
+        Input("flip-v", "n_clicks"),
+        State("aux-data", "data"),
+        prevent_initial_call=True,
+    )
+    def flip_vert(_, aux_data):
+        if aux_data is None:
+            raise PreventUpdate
+        
+        aux_data['vals'] = np.array(aux_data['vals'])
+        aux_data['vals'][:,2] *= -1
+        aux_data['vals'][:,5] *= -1
+        return aux_data
+    
+    @callback(
+        Output("aux-data", "data", allow_duplicate=True),
+        Input("flip-h", "n_clicks"),
+        State("aux-data", "data"),
+        prevent_initial_call=True,
+    )
+    def flip_horiz(_, aux_data):
+        if aux_data is None:
+            raise PreventUpdate
+        
+        aux_data['vals'] = np.array(aux_data['vals'])
+        aux_data['vals'][:,1] *= -1
+        aux_data['vals'][:,3] *= -1
+        aux_data['vals'][:,5] *= -1
+        return aux_data
+
+    @callback(
+        Output("curve-store", "data",allow_duplicate=True),
+        Output("k-store", "data"),
+        Output("period-store", "data"),
+        Output("display", "figure", allow_duplicate=True),
+        Input("slider", "value"),
+        Input("frame-dropdown", "value"),
+        Input("num-periods", "value"),
+        Input("aux-data", "data"),
+        State("display", "figure"),
+        prevent_initial_call=True,
+    )
+    def update_curve(s, frame, n_prds, aux_data, fig):
+        if aux_data is None:
+            raise PreventUpdate
+        arclen, smax, s0, vals = aux_data = aux_data["arclen"], aux_data["smax"], aux_data["s0"], aux_data["vals"]
+        if vals is None:
+            raise PreventUpdate
+        spline = CubicSpline(arclen, vals, axis=0)
+        
+        patch = Patch()
+        # print("UPDATE")
+        point = spline(s * smax)
+        x0, tf = point[:6], point[-1]
+        Xg = targ.get_X(x0, tf)
+        X, _, _ = dc_overconstrained(Xg, targ.f_df_stm, targ_tol, debug=False)
+        x0 = targ.get_x0(X)
+        tf = targ.get_period(X)
+        ts, xs1, (_, Fs), _ = dop853(
+            eom, (0.0, tf), x0, int_tol, args=(mu,), dense_output=True
+        )
+        tdense, xyz = dop_interpolate(ts, xs1.T, Fs, n_mult=density)
+        te = np.linspace(0, tf, n_time, endpoint=False)
+        _, xyze = dop_interpolate(ts, xs1.T, Fs, t_eval=te)
+        if frame in ["P2-Inertial", "P1-Inertial"]:
+            # ADD PERIODS
+            tenew = te.copy()
+            tdensenew = tdense.copy()
+            xyznew = xyz.copy()
+            xyzenew = xyze.copy()
+            for jj in range(n_prds - 1):
+                xyznew = np.hstack((xyznew, xyz[:, 1:]))
+                xyzenew = np.hstack((xyzenew, xyze))
+                tenew = np.append(tenew, te + tf * (jj + 1))
+                tdensenew = np.append(tdensenew, tdense[1:] + tf * (jj + 1))
+            te, tdense = tenew.copy(), tdensenew.copy()
+            xyz, xyze = xyznew.copy(), xyzenew.copy()
+
+        if frame == "P2-Inertial":
+            xyz = to_lci(xyz.T, tdense, LU=1, TU=1, mu=mu).T
+            xyze = to_lci(xyze.T, te, LU=1, TU=1, mu=mu).T
+            patch.data[-1].visible = False
+            patch.data[-2].visible = False
+            patch.data[2].visible = True
+            patch.data[3].visible = True
+            patch.data[4].visible = True
+        elif frame == "P1-Inertial":
+            xyz = to_eci(xyz.T, tdense, LU=1, TU=1, mu=mu).T
+            xyze = to_eci(xyze.T, te, LU=1, TU=1, mu=mu).T
+            patch.data[-1].visible = False
+            patch.data[-2].visible = False
+            patch.data[2].visible = True
+            patch.data[3].visible = True
+            patch.data[4].visible = True
+        else:
+            patch.data[-1].visible = True
+            patch.data[-2].visible = True
+            patch.data[2].visible = False
+            patch.data[3].visible = False
+            patch.data[4].visible = False
+
+        x, y, z = xyz[:3].astype(np.float32)
+        xl = np.array([np.min(x), np.max(x)])
+        yl = np.array([np.min(y), np.max(y)])
+        zl = np.array([np.min(z), np.max(z)])
+
+        lims = np.array([xl, yl, zl])
+        ctrs = np.mean(lims, axis=1)
+        w = np.max(lims[:, 1] - lims[:, 0])
+        bounds = np.array([-w / 2, w / 2])
+
+        if frame == "CR3BP":
+            xl, yl, zl = ctrs[:, None] + 1.3 * bounds[None, :]
+        else:
+            hlim = 1.3 * np.max(np.concat((lims.flatten(), -lims.flatten())))
+            xl = np.array([-hlim, hlim])
+            yl = np.array([-hlim, hlim])
+            zl = (np.min(z) + np.max(z)) / 2 + np.array([-hlim, hlim])
+
+        patch.data[0].x = x
+        patch.data[0].y = y
+        patch.data[1].x = [np.nan]
+        patch.data[1].y = [np.nan]
+        patch.data[4].x = [np.nan]
+        patch.data[4].y = [np.nan]
+
+        patch.layout.scene.xaxis.range = xl
+        patch.layout.scene.yaxis.range = yl
+        patch.layout.scene.zaxis.range = zl
+        patch.data[0].z = z
+        patch.data[1].z = [0]
+        patch.data[4].z = [0]
+
+        # print("FINISH")
+
+        return xyze[:3].T, 0, tf, patch
+
+    @callback(
+        Output("timer", "disabled"),
+        Input("play", "n_clicks"),
+        State("timer", "disabled"),
+        prevent_initial_call=True,
+    )
+    def pauseplay(_, disabled):
+        return not disabled
+    
+    print("COMPILING HELPERS...", end="")
+    print("\t\tCompiled")
+    app.run(debug=debug, use_reloader=False, jupyter_mode="inline", port=port)
 
 
 # TODO: pyvista?
+
