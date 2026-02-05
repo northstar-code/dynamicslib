@@ -1053,7 +1053,7 @@ def test_new_family(
     df_compare: pd.DataFrame, keyword: str | None = None, colormap="rainbow"
 ):
     for col in ["Initial " + state for state in ["x", "y", "z", "vx", "vy", "vz"]]:
-        if col in df_compare.columns and np.all(np.abs(df_compare[col])) < 1e-9:
+        if col in df_compare.columns and np.all(np.abs(df_compare[col]) < 1e-9):
             df_compare = df_compare.drop(columns=col)
     cols = df_compare.columns
     newtype = (
@@ -1066,18 +1066,20 @@ def test_new_family(
     filenames = [
         file.removesuffix(".csv") for file in os.listdir(root) if file.endswith("csv")
     ]
+
     filenames = [file for file in filenames if keyword is None or keyword in file]
+
     vals_dict = {}
     for fname in filenames:
         path = root + fname + ".csv"
         db = pd.read_csv(path).set_index("Index")
         for col in ["Initial " + state for state in ["x", "y", "z", "vx", "vy", "vz"]]:
-            if col in db.columns and np.all(np.abs(db[col])) < 1e-9:
+            if col in db.columns and np.all(np.abs(db[col]) < 1e-9):
                 db = db.drop(columns=col)
         cols = db.columns
         periods = db["Period"]
         jcs = db["Jacobi Constant"]
-        orbtype = "Spatial" if "Initial z" in cols or "Initial vz" in cols else "Planar"
+        orbtype = "Spatial" if (("Initial z" in cols) or ("Initial vz" in cols)) else "Planar"
         if orbtype == newtype:
             vals_dict[fname] = {
                 "Period": periods.values,
@@ -1822,7 +1824,7 @@ def gui2(
     
     @callback(Output("aux-data", 'data',allow_duplicate=True), Output("slider", "value"), Input("fam-dropdown", "value"),prevent_initial_call=True)
     def set_family(fam):
-        if fam is filenames[0]:
+        if fam == filenames[0]:
             raise PreventUpdate
         full_dataframe = pd.read_csv(db_path+fam+".csv")
         if "Index" in full_dataframe.columns:
