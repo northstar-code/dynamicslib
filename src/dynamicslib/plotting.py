@@ -1072,7 +1072,7 @@ def test_new_family(
     vals_dict = {}
     for fname in filenames:
         path = root + fname + ".csv"
-        db = pd.read_csv(path).set_index("Index")
+        db = pd.read_csv(path, engine='pyarrow').set_index("Index")
         for col in ["Initial " + state for state in ["x", "y", "z", "vx", "vy", "vz"]]:
             if col in db.columns and np.all(np.abs(db[col]) < 1e-9):
                 db = db.drop(columns=col)
@@ -1616,6 +1616,7 @@ def gui2(
     color="white",
     n_time: int = 500,
     framerate=20,
+    max_iter:int=10,
     debug:bool=False
 ):
     """Displays an animatable figure in either 2D or 3D of an individual member of the selected family.
@@ -1946,7 +1947,9 @@ def gui2(
         point = spline(s * smax)
         x0, tf = point[:6], point[-1]
         Xg = targ.get_X(x0, tf)
-        X, _, _ = dc_overconstrained(Xg, targ.f_df_stm, targ_tol, debug=False)
+        X, _, stm = dc_overconstrained(Xg, targ.f_df_stm, targ_tol, debug=False,max_iter=max_iter)
+        eigs = np.linalg.eigvals(stm)
+        stab = np.max([(np.abs(lam) + 1 / np.abs(lam)) / 2 for lam in eigs])
         x0 = targ.get_x0(X)
         tf = targ.get_period(X)
         ts, xs1, (_, Fs), _ = dop853(
@@ -2025,11 +2028,11 @@ def gui2(
         patch.data[4].z = [0]
         
         jc = jacobi_constant(x0)
-        curve_data = dict(coords=xyze[:3].T,period=tf, jacobi=jc)
+        curve_data = dict(coords=xyze[:3].T,period=tf, jacobi=jc, stabind=stab)
         
         displaydata = [html.P("x0: ["+", ".join([f"{x:.7f}" for x in x0[:3]])+"]"), 
                        html.P("v0: ["+", ".join([f"{x:.7f}" for x in x0[3:]])+"]"), 
-                       html.P(f"Period: {tf:.7f}, JC: {jc:.6f}")]
+                       html.P(f"Period: {tf:.5f}, JC: {jc:.4f}, SI: {stab:.2e}")]
         return curve_data, 0, displaydata, patch
 
     @callback(

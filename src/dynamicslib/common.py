@@ -218,18 +218,12 @@ def manifold_stepoffs(
     """
     sv0 = np.append(x0, np.eye(6).flatten())
     te = np.linspace(0, period, N + 1)
-    ode_out = solve_ivp(
-        coupled_stm_eom,
-        (0.0, period),
-        sv0,
-        atol=int_tol,
-        rtol=int_tol,
-        t_eval=te,
-        args=(mu,),
-    )
-    svs = ode_out.y.T[:-1]
+    ode_out = dop853(
+        coupled_stm_eom, (0.0, period), sv0, int_tol, t_eval=te, args=(mu,)
+    )[1]
+    svs = ode_out.T[:-1]
     xs = [sv[:6] for sv in svs]
-    mono = ode_out.y.T[-1, 6:].reshape(6, 6)
+    mono = ode_out.T[-1, 6:].reshape(6, 6)
     stms = [sv[6:].reshape(6, 6) for sv in svs]
     monodromies = [stm @ mono @ np.linalg.inv(stm) for stm in stms]
     eigs = [np.linalg.eig(phi) for phi in monodromies]

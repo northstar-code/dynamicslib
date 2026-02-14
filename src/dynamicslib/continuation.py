@@ -21,7 +21,7 @@ def arclen_cont(
     stop_callback: Callable | None = None,  # possibly change to also take dF?
     stop_kwags: dict = {},
 ) -> Tuple[List, List]:
-    """Pseudoarclength continuation wrapper. The modified algorithm has a full step size of s, rather than projected step size.
+    """Custom arclength-based continuation wrapper. The modified algorithm has a full step size of s, rather than projected step size.
 
     Args:
         X0 (NDArray): initial control variables
@@ -125,7 +125,7 @@ def arclen_variable_step(
     exp_iters: float = 0.3,
     exact_tangent: bool = False,
 ) -> Tuple[List, List]:
-    """Pseudoarclength continuation wrapper with variable step size. This modified algorithm has a full step size of s, rather than projected step size.
+    """Custom arclength-based continuation wrapper with variable step size. This modified algorithm has a full step size of s, rather than projected step size.
     At each step, the step size multiplies by num_iters/num_iters_previous, in so that if it takes longer to converge we reduce the step size
     At each step, the step size also multiplies by the dot product between the tangent vector and the step; if this dot product is close to 1, then the curve is not sharp and step size wont be reduced. Else, it will.
     At each step, the step size also multiplies by the parameter `rate`, which should be >1 to ensure step size can recover
