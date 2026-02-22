@@ -119,9 +119,74 @@ def coupled_stm_eom(
     _, state: NDArray[np.floating], mu: float = muEM
 ) -> NDArray[np.floating]:
     pv = state[:6]
-    dpv = eom(None, pv, mu)
+    dpv = eom(0.0, pv, mu)
     stm = state[6:].reshape((6, 6))
     A = get_A(pv, mu)  # pv[:3]
+    dstm = A @ stm
+
+    dstate = np.array([*dpv, *dstm.flatten()])
+    return dstate
+
+
+@njit(cache=True)
+def U_hess_planar(pos: NDArray[np.floating], mu: float = muEM) -> NDArray[np.floating]:
+    r1 = pos - np.array([-mu, 0])
+    r2 = pos - np.array([1 - mu, 0])
+    r1mag = np.linalg.norm(r1)
+    r2mag = np.linalg.norm(r2)
+    Uxx = (
+        np.diag(np.array([1, 1]))
+        + 3 * (1 - mu) / r1mag**5 * np.outer(r1, r1)
+        - (1 - mu) / r1mag**3 * np.eye(2)
+        + 3 * mu / r2mag**5 * np.outer(r2, r2)
+        - mu / r2mag**3 * np.eye(2)
+    )
+
+    return Uxx
+
+
+@njit(cache=True)
+def get_A_planar(state: NDArray[np.floating], mu: float = muEM) -> NDArray[np.floating]:
+    pos = state[:2]
+    Uxx = U_hess_planar(pos, mu)
+    O = np.zeros((2, 2))
+    I = np.eye(2)
+    Omega = np.array([[0, 2], [-2, 0]])
+    A1 = np.concatenate((O, I), axis=1)
+    A2 = np.concatenate((Uxx, Omega), axis=1)
+    A = np.concatenate((A1, A2), axis=0)
+    return A
+
+
+@njit(cache=True)
+def eom_planar(
+    _, state: NDArray[np.floating], mu: float = muEM
+) -> NDArray[np.floating]:
+    x, y, vx, vy = state[:4]
+    xyz = state[:2]
+    r1vec = xyz + np.array([mu, 0])
+    r2vec = xyz + np.array([mu - 1, 0])
+    r1mag = np.linalg.norm(r1vec)
+    r2mag = np.linalg.norm(r2vec)
+
+    ddxyz = (
+        -(1 - mu) * r1vec / r1mag**3
+        - mu * r2vec / r2mag**3
+        + np.array([2 * vy + x, -2 * vx + y])
+    )
+
+    dstate = np.append(state[2:], ddxyz)
+    return dstate
+
+
+@njit(cache=True)
+def coupled_stm_eom_planar(
+    _, state: NDArray[np.floating], mu: float = muEM
+) -> NDArray[np.floating]:
+    pv = state[:4]
+    dpv = eom_planar(0.0, pv, mu)
+    stm = state[4:].reshape((4, 4))
+    A = get_A_planar(pv, mu)  # pv[:3]
     dstm = A @ stm
 
     dstate = np.array([*dpv, *dstm.flatten()])
@@ -327,9 +392,61 @@ def prop_multiple(
     return dct_out
 
 
-# shortcut to get JC and tf from X
-def get_JC_tf(X: NDArray, X2xtf_func: Callable, mu: float = muEM):
-    x0, tf = X2xtf_func(X)
-    jc = jacobi_constant(x0, mu)
+# @njit
+# def hit_moon_dispatcher(i, t, x, args):
+#     """Event function for collision with the second primary"""
+#     if len(args) == 1:
+#         mu = args[0]
+#         radius = 1740 / 384400
+#     elif len(args) == 2:
+#         mu, radius = args
+#     else:
+#         mu = muEM
+#         radius = 1740 / 384400
 
-    return jc, tf
+#     dx = x[0] - (1 - mu)
+#     dy = x[1]
+#     return dx**2 + dy**2 - radius**2
+
+
+@njit
+def hit_moon_dispatcher(i, t, x, args):
+    """Event function for collision with the primaries
+    args are mu, R(B1), R(B2)
+
+    Will only break if somehow a single integration step passes from just outside of one body to inside the other
+    """
+    if len(args) == 3:
+        mu, r1, r2 = args
+    elif len(args) == 1:
+        mu = args[0]
+    else:
+        mu = muEM
+        r1 = 6371 / 384400
+        r2 = 1740 / 384400
+
+    dy = x[1]
+    dx2 = np.abs(x[0] - (1 - mu))
+    # dx1 = np.abs(x[0] - (-mu))
+
+    # if dx1 - r1 < dx2 - r2:
+    #     return dx1**2 + dy**2 - r1**2
+    # else:
+    #     return dx2**2 + dy**2 - r2**2
+    return dx2**2 + dy**2 - r2**2
+
+
+# Force recompile again and again
+def numba_compile_loop(func, *args, **kwargs):
+    while True:
+        try:
+            out = func(*args, **kwargs)
+            break
+        except ReferenceError as err:
+            if "underlying object has vanished" in str(err):
+                print("Numba error, recompiling")
+            else:
+                print(f"Non-numba-recompile error: {err}")
+                break
+
+    return out
