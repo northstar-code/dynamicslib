@@ -427,13 +427,13 @@ def hit_moon_dispatcher(i, t, x, args):
 
     dy = x[1]
     dx2 = np.abs(x[0] - (1 - mu))
-    # dx1 = np.abs(x[0] - (-mu))
+    dx1 = np.abs(x[0] - (-mu))
 
-    # if dx1 - r1 < dx2 - r2:
-    #     return dx1**2 + dy**2 - r1**2
-    # else:
-    #     return dx2**2 + dy**2 - r2**2
-    return dx2**2 + dy**2 - r2**2
+    if dx1 - r1 < dx2 - r2:
+        return dx1**2 + dy**2 - r1**2
+    else:
+        return dx2**2 + dy**2 - r2**2
+    # return dx2**2 + dy**2 - r2**2
 
 
 # Force recompile again and again

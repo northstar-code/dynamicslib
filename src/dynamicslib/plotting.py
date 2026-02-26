@@ -1947,7 +1947,7 @@ def gui2(
         point = spline(s * smax)
         x0, tf = point[:6], point[-1]
         Xg = targ.get_X(x0, tf)
-        X, _, stm = dc_overconstrained(Xg, targ.f_df_stm, targ_tol, debug=False,max_iter=max_iter)
+        X, _, stm = dc_overconstrained(Xg, targ.f_df_stm, targ_tol,max_iter=max_iter,debug=True)
         eigs = np.linalg.eigvals(stm)
         stab = np.max([(np.abs(lam) + 1 / np.abs(lam)) / 2 for lam in eigs])
         x0 = targ.get_x0(X)
@@ -2044,10 +2044,22 @@ def gui2(
     def pauseplay(_, disabled):
         return not disabled
     
-    print("COMPILING HELPERS...", end="")
-    
-    data, s0 = set_family("L1 Halo") # this will force compile
-    _ = update_curve_within_fam(s0, "P2-Inertial", 1, data, fig) # this will force compile
+    print("COMPILING HELPERS...")
+    while True:
+        try:
+            data, s0 = set_family("L1 Lyapunov")
+            break
+        except ReferenceError:
+            print("Numba error, recompiling (excepted to happen a few times)")
+            pass
+    while True:
+        try:            
+            _ = update_curve_within_fam(s0, "P2-Inertial", 1, data, fig) # this will force compile
+            break
+        except ReferenceError:
+            print("Numba error, recompiling (excepted to happen a few times)")
+            pass
+    os.system('cls' if os.name == 'nt' else 'clear')
     
     print("\t\tCompiled")
     

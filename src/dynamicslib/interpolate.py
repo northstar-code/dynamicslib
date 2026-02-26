@@ -13,7 +13,7 @@ def Hermite_interp_interval(
     x1: float | NDArray,
     dxdt0: float | NDArray,
     dxdt1: float | NDArray,
-) -> float | NDArray:
+) -> NDArray:
     """Cubic Hermite spline interpolation. Source: Wikipedia
 
     Args:
@@ -197,7 +197,7 @@ def dop_interpolate(
     return t_eval, x_eval.T
 
 
-@njit(cache=True)
+@njit
 def interp_event(
     x0: NDArray[np.floating],
     x1: NDArray[np.floating],

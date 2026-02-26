@@ -8,7 +8,7 @@ import dynamicslib.DOP853_coefs as coefs
 from dynamicslib.interpolate import dop_interpolate, interp_event
 
 # Keeping for later, probably wont use
-@njit(cache=True)
+@njit
 def rkf45(
     func: Callable,
     t_span: Tuple[float, float],
@@ -75,7 +75,7 @@ def rkf45(
 
 
 # A single RK8 step
-@njit(cache=True)
+@njit
 def rk8_step(
     func: Callable,
     sv0: NDArray,
@@ -113,7 +113,7 @@ def rk8_step(
     return np.reshape(svnew, x_shape)
 
 
-@njit(cache=True)
+@njit
 def dop853_dense_extra(
     func: Callable,
     h: float,
@@ -161,7 +161,7 @@ def dop853_dense_extra(
     return F
 
 
-@njit(cache=True)
+@njit
 def dop853(
     func: Callable[..., NDArray],
     t_span: Tuple[float, float],
