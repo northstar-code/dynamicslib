@@ -9,7 +9,6 @@ import pandas as pd
 from IPython.display import display, HTML
 import plotly
 from numba import njit
-from scipy.signal import find_peaks
 from base64 import b64encode
 from dash import Dash, dcc, html, Input, Output, State, Patch, callback
 import dash_bootstrap_components as dbc

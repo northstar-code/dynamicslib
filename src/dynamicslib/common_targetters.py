@@ -327,7 +327,7 @@ class spatial_period_fixed(Targetter):
     def get_x0(self, X: NDArray):
         return np.array([X[0], 0, X[1], 0, X[2], 0])
 
-    def DF(self, stm: NDArray, eomf: NDArray):
+    def DF(self, stm: NDArray):
         dF = np.array(
             [
                 [stm[1, 0], stm[1, 2], stm[1, -2]],
@@ -336,7 +336,7 @@ class spatial_period_fixed(Targetter):
             ]
         )
         return dF
-    
+
     def get_period(self, X: NDArray) -> float:
         return self.period
 
@@ -352,9 +352,8 @@ class spatial_period_fixed(Targetter):
         )
         xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
         xf = np.array(xf)
-        eomf = eom(ts[-1], xf, self.mu)
 
-        dF = self.DF(stm, eomf)
+        dF = self.DF(stm)
         f = self.f(xf)
 
         G = np.diag([1, -1, 1, -1, 1, -1])

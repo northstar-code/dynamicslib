@@ -8,7 +8,7 @@ from numba import types
 from scipy.integrate import solve_ivp
 from scipy.integrate._ivp.ivp import OdeResult
 
-from dynamicslib.consts import muEM
+from dynamicslib.consts import muEM, RMoon, REarth
 from dynamicslib.integrate import dop853
 from dynamicslib.interpolate import dop_interpolate
 
@@ -61,6 +61,9 @@ def get_Lpts(mu: float = muEM):
         ],
     )
     return lagrange_points
+
+
+# %% spatial
 
 
 @njit(cache=True)
@@ -128,6 +131,9 @@ def coupled_stm_eom(
     return dstate
 
 
+# %% planar
+
+
 @njit(cache=True)
 def U_hess_planar(pos: NDArray[np.floating], mu: float = muEM) -> NDArray[np.floating]:
     r1 = pos - np.array([-mu, 0])
@@ -191,6 +197,127 @@ def coupled_stm_eom_planar(
 
     dstate = np.array([*dpv, *dstm.flatten()])
     return dstate
+
+
+# %% singularity-removed TODO
+
+
+@njit(cache=True)
+def U_hess_nosingular(
+    pos: NDArray[np.floating], mu: float = muEM, R1: float = REarth, R2: float = RMoon
+) -> NDArray[np.floating]:
+    r1 = pos - np.array([-mu, 0, 0])
+    r2 = pos - np.array([1 - mu, 0, 0])
+    r1mag = np.linalg.norm(r1)
+    r2mag = np.linalg.norm(r2)
+
+    if r1mag < R1:
+        Uxx = (
+            np.diag(np.array([1, 1, 0]))
+            + (1 - mu) / R1**2 / r1mag**3 * np.outer(r1, r1)
+            - (1 - mu) / R1**2 / r1mag * np.eye(3)
+            + 3 * mu / r2mag**5 * np.outer(r2, r2)
+            - mu / r2mag**3 * np.eye(3)
+        )
+    elif r2mag < R2:
+        Uxx = (
+            np.diag(np.array([1, 1, 0]))
+            + 3 * (1 - mu) / r1mag**5 * np.outer(r1, r1)
+            - (1 - mu) / r1mag**3 * np.eye(3)
+            + mu / R2**2 / r2mag**3 * np.outer(r2, r2)
+            - mu / R2**2 / r2mag * np.eye(3)
+        )
+
+    else:
+
+        Uxx = (
+            np.diag(np.array([1, 1, 0]))
+            + 3 * (1 - mu) / r1mag**5 * np.outer(r1, r1)
+            - (1 - mu) / r1mag**3 * np.eye(3)
+            + 3 * mu / r2mag**5 * np.outer(r2, r2)
+            - mu / r2mag**3 * np.eye(3)
+        )
+
+    return Uxx
+
+
+@njit(cache=True)
+def get_A_nosingular(
+    state: NDArray[np.floating], mu: float = muEM, R1: float = REarth, R2: float = RMoon
+) -> NDArray[np.floating]:
+    pos = state[:3]
+    Uxx = U_hess_nosingular(pos, mu, R1, R2)
+    O = np.zeros((3, 3))
+    I = np.eye(3)
+    Omega = np.array([[0, 2, 0], [-2, 0, 0], [0, 0, 0]])
+    A1 = np.concatenate((O, I), axis=1)
+    A2 = np.concatenate((Uxx, Omega), axis=1)
+    A = np.concatenate((A1, A2), axis=0)
+    return A
+
+
+@njit(cache=True)
+def eom_nosingular(
+    _,
+    state: NDArray[np.floating],
+    mu: float = muEM,
+    R1: float = REarth,
+    R2: float = RMoon,
+) -> NDArray[np.floating]:
+    x, y, z, vx, vy, vz = state[:6]
+    xyz = state[:3]
+    r1vec = xyz + np.array([mu, 0, 0])
+    r2vec = xyz + np.array([mu - 1, 0, 0])
+    r1mag = np.linalg.norm(r1vec)
+    r2mag = np.linalg.norm(r2vec)
+
+    if r1mag < R1:
+        sf = r1mag / R1
+        ddxyz = (
+            -(sf**2) * (1 - mu) * r1vec / r1mag**3
+            - mu * r2vec / r2mag**3
+            + np.array([2 * vy + x, -2 * vx + y, 0])
+        )
+    elif r2mag < R2:
+        sf = r2mag / R2
+        ddxyz = (
+            -(1 - mu) * r1vec / r1mag**3
+            - sf**2 * mu * r2vec / r2mag**3
+            + np.array([2 * vy + x, -2 * vx + y, 0])
+        )
+
+    else:
+        ddxyz = (
+            -(1 - mu) * r1vec / r1mag**3
+            - mu * r2vec / r2mag**3
+            + np.array([2 * vy + x, -2 * vx + y, 0])
+        )
+
+    dstate = np.zeros(6)
+    dstate[:3] = state[3:]
+    dstate[3:] = ddxyz
+    return dstate
+
+
+@njit(cache=True)
+def coupled_stm_eom_nosingular(
+    _,
+    state: NDArray[np.floating],
+    mu: float = muEM,
+    R1: float = REarth,
+    R2: float = RMoon,
+) -> NDArray[np.floating]:
+    pv = state[:6]
+    dpv = eom_nosingular(0.0, pv, mu, R1, R2)
+    stm = state[6:].reshape((6, 6))
+    A = get_A_nosingular(pv, mu, R1, R2)  # pv[:3]
+    dstm = A @ stm
+
+    dstate = np.array([*dpv, *dstm.flatten()])
+    return dstate
+
+
+# %% tools
 
 
 @njit(cache=True)
@@ -309,104 +436,87 @@ def manifold_stepoffs(
     return x0s_u1 + x0s_u2, x0s_s1 + x0s_s2, aux
 
 
-def integrate_one(
-    lock: threading.Lock,
-    dict_out: dict,
-    index: int,
-    tf: float,
-    x0: NDArray,
-    events: Callable | List,
-    mu: float,
-    int_tol: float,
-):
-    """Propagate multiple curves to a common set of event functions. Uses scipy propagator, so may not be great.
+# def integrate_one(
+#     lock: threading.Lock,
+#     dict_out: dict,
+#     index: int,
+#     tf: float,
+#     x0: NDArray,
+#     events: Callable | List,
+#     mu: float,
+#     int_tol: float,
+# ):
+#     """Propagate multiple curves to a common set of event functions. Uses scipy propagator, so may not be great.
 
-    Args:
-        lock (threading.Lock): Thread lock to prevent simultaneous writes to dict
-        dictr_out (dict): dictionary to fill with outputs
-        index (int): Index to place result in dict
-        tf (float): Max integration time, in case event doesnt trigger. Also holds information about integration direction.
-        x0 (NDArray): Initial condition
-        events (Callable | List): Event function or event functions list. Must have signature (t, x, mu) -> float
-        mu (float, optional): Mass parameter. Defaults to muEM.
-        int_tol (float, optional): Integration tolerance. Defaults to 1e-10.
+#     Args:
+#         lock (threading.Lock): Thread lock to prevent simultaneous writes to dict
+#         dictr_out (dict): dictionary to fill with outputs
+#         index (int): Index to place result in dict
+#         tf (float): Max integration time, in case event doesnt trigger. Also holds information about integration direction.
+#         x0 (NDArray): Initial condition
+#         events (Callable | List): Event function or event functions list. Must have signature (t, x, mu) -> float
+#         mu (float, optional): Mass parameter. Defaults to muEM.
+#         int_tol (float, optional): Integration tolerance. Defaults to 1e-10.
 
-    Returns:
-        dict[int, OdeResult]: Indexed results with ODE output
-    """
-    try:
-        iter(events)
-        pass
-    except TypeError:
-        events = [events]
+#     Returns:
+#         dict[int, OdeResult]: Indexed results with ODE output
+#     """
+#     try:
+#         iter(events)
+#         pass
+#     except TypeError:
+#         events = [events]
 
-    ode_out = solve_ivp(
-        eom,
-        (0.0, tf),
-        x0,
-        "DOP853",
-        atol=int_tol,
-        rtol=int_tol,
-        args=(mu,),
-        events=events,
-    )
-    with lock:
-        dict_out[index] = ode_out
-
-
-def prop_multiple(
-    x0s: NDArray | List,
-    events: Callable | List,
-    tfmax: float,
-    mu: float = muEM,
-    int_tol: float = 1e-10,
-) -> dict[int, OdeResult]:
-    """Propagate multiple curves to a common set of event functions. Uses scipy propagator, so may not be great.
-
-    Args:
-        x0s (NDArray | List): List of initial conditions, ordered. Nx6
-        events (Callable | List): Event function or event functions list. Must have signature (t, x, mu) -> float
-        tfmax (float): Maximum final time, in case event never triggers
-        mu (float, optional): Mass parameter. Defaults to muEM.
-        int_tol (float, optional): Integration tolerance. Defaults to 1e-10.
-
-    Returns:
-        dict[int, OdeResult]: Indexed results with ODE output
-    """
-    dct_out = {}
-    N = len(x0s)
-    lock = threading.Lock()
-
-    threads = []
-    for ind in range(N):
-        x0 = x0s[ind]
-        args = (lock, dct_out, ind, tfmax, x0, events, mu, int_tol)
-        thread = threading.Thread(target=integrate_one, args=args)
-        threads.append(thread)
-
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-
-    return dct_out
+#     ode_out = solve_ivp(
+#         eom,
+#         (0.0, tf),
+#         x0,
+#         "DOP853",
+#         atol=int_tol,
+#         rtol=int_tol,
+#         args=(mu,),
+#         events=events,
+#     )
+#     with lock:
+#         dict_out[index] = ode_out
 
 
-# @njit
-# def hit_moon_dispatcher(i, t, x, args):
-#     """Event function for collision with the second primary"""
-#     if len(args) == 1:
-#         mu = args[0]
-#         radius = 1740 / 384400
-#     elif len(args) == 2:
-#         mu, radius = args
-#     else:
-#         mu = muEM
-#         radius = 1740 / 384400
+# def prop_multiple(
+#     x0s: NDArray | List,
+#     events: Callable | List,
+#     tfmax: float,
+#     mu: float = muEM,
+#     int_tol: float = 1e-10,
+# ) -> dict[int, OdeResult]:
+#     """Propagate multiple curves to a common set of event functions. Uses scipy propagator, so may not be great.
 
-#     dx = x[0] - (1 - mu)
-#     dy = x[1]
-#     return dx**2 + dy**2 - radius**2
+#     Args:
+#         x0s (NDArray | List): List of initial conditions, ordered. Nx6
+#         events (Callable | List): Event function or event functions list. Must have signature (t, x, mu) -> float
+#         tfmax (float): Maximum final time, in case event never triggers
+#         mu (float, optional): Mass parameter. Defaults to muEM.
+#         int_tol (float, optional): Integration tolerance. Defaults to 1e-10.
+
+#     Returns:
+#         dict[int, OdeResult]: Indexed results with ODE output
+#     """
+#     dct_out = {}
+#     N = len(x0s)
+#     lock = threading.Lock()
+
+#     threads = []
+#     for ind in range(N):
+#         x0 = x0s[ind]
+#         args = (lock, dct_out, ind, tfmax, x0, events, mu, int_tol)
+#         thread = threading.Thread(target=integrate_one, args=args)
+#         threads.append(thread)
+
+#     for thread in threads:
+#         thread.start()
+#     for thread in threads:
+#         thread.join()
+
+#     return dct_out
 
 
 @njit
@@ -426,13 +536,15 @@ def hit_moon_dispatcher(i, t, x, args):
         r2 = 1740 / 384400
 
     dy = x[1]
+    dz = x[2]
     dx2 = np.abs(x[0] - (1 - mu))
     dx1 = np.abs(x[0] - (-mu))
 
     if dx1 - r1 < dx2 - r2:
-        return dx1**2 + dy**2 - r1**2
+        out = dx1**2 + dy**2 + dz**2 - r1**2
     else:
-        return dx2**2 + dy**2 - r2**2
+        out = dx2**2 + dy**2 + dz**2 - r2**2
+    return out
     # return dx2**2 + dy**2 - r2**2
 
 

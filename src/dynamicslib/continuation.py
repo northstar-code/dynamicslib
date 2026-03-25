@@ -6,7 +6,7 @@ import pandas as pd
 from scipy.interpolate import UnivariateSpline
 
 
-def arclen_cont(
+def fixed_step_cont(
     X0: NDArray,
     f_df_stm_func: Callable[[NDArray], Tuple[NDArray, NDArray, NDArray]],
     dir0: NDArray | List,
@@ -109,7 +109,7 @@ def arclen_cont(
     return Xs, eig_vals
 
 
-def arclen_variable_step(
+def adaptive_cont(
     X0: NDArray,
     f_df_stm_func: Callable[[NDArray], Tuple[NDArray, NDArray, NDArray]],
     dir0: NDArray | List,
@@ -118,13 +118,14 @@ def arclen_variable_step(
     S: float = 0.5,
     tol: float = 1e-10,
     max_iter: int = 10,
+    target_iter: int = 6,
     rate: float = 1.15,
     reduce_maxiter: float = 5.0,
     reduce_reverse: float = 2.0,
     exp_direction: float = 10.0,
     exp_iters: float = 0.3,
     exact_tangent: bool = False,
-) -> Tuple[List, List]:
+) -> Tuple[List, List, Tuple[List, List, List]]:
     """Custom arclength-based continuation wrapper with variable step size. This modified algorithm has a full step size of s, rather than projected step size.
     At each step, the step size multiplies by num_iters/num_iters_previous, in so that if it takes longer to converge we reduce the step size
     At each step, the step size also multiplies by the dot product between the tangent vector and the step; if this dot product is close to 1, then the curve is not sharp and step size wont be reduced. Else, it will.
@@ -150,6 +151,7 @@ def arclen_variable_step(
     assert rate >= 1
     assert reduce_maxiter > 1
     assert reduce_reverse > 1
+    assert max_iter > target_iter
 
     X = X0.copy()
     tangent_prev = dir0 / np.linalg.norm(dir0)
@@ -165,76 +167,81 @@ def arclen_variable_step(
 
     Xs = [X0]
     eig_vals = [np.linalg.eigvals(stm)]
+    tangents = [tangent.copy()]
+    DFs = [dF]
+    s_vals = [0]
 
     bar = tqdm(total=S)
     arclen = 0.0
     s = s0
 
     niters = 0
-    niters_prev = max_iter
+
     # ensure that the stopping condition hasnt been satisfied
     while arclen < S and s >= s_min:
-        bar.set_description(f"s = {s:.3e}")
         try:
-            X, dF, stm, niters = dc_arclen(
-                X, tangent, f_df_stm_func, s, tol, modified=True, max_iter=max_iter
-            )
-        except np.linalg.LinAlgError as err:
-            print(f"Linear algebra error encountered: {err}")
-            print("returning what's been calculated so far")
+            bar.set_description(f"s = {s:.3e}")
+            try:
+                X, dF, stm, niters = dc_arclen(
+                    X, tangent, f_df_stm_func, s, tol, modified=True, max_iter=max_iter
+                )
+            except np.linalg.LinAlgError as err:
+                print(f"Linear algebra error encountered: {err}")
+                print("returning what's been calculated so far")
+                break
+            except KeyboardInterrupt as err:
+                print("HALTING, returning what's been calculated so far")
+                break
+            except RuntimeError as err:
+                print("Rejecting step")
+                s /= reduce_maxiter
+                continue
+
+            # print(np.dot(tangent, X - Xs[-1])/s)
+            dprod_check = np.dot(tangent, X - Xs[-1]) / s
+            if dprod_check < 0.8:
+                print(
+                    f"@S={arclen:.3f}: Possibly reversal, decreasing step size and rejecting"
+                )
+                # reject the last step
+                s /= reduce_reverse
+                dS = np.linalg.norm(Xs[-1] - Xs[-2])
+                arclen -= dS
+                bar.update(-dS)
+                Xs.pop()
+                tangents.pop()
+                DFs.pop()
+                s_vals.pop()
+                X = Xs[-1]
+                tangent = tangent_prev
+
+            Xs.append(X)
+            tangents.append(tangent)
+            eig_vals.append(np.linalg.eigvals(stm))
+            DFs.append(dF)
+            arclen += s
+            s_vals.append(arclen)
+
+            tangent_prev = tangent
+
+            svd = np.linalg.svd(dF)
+            tangent = svd.Vh[-1]
+            # if we flip flop, undo the flipflop
+            if np.dot(tangent, Xs[-1] - Xs[-2]) < 0:
+                tangent *= -1
+
+            bar.update(float(s))
+            s *= (target_iter / niters) ** exp_iters * rate * dprod_check**exp_direction
+
+            if s < s_min:
+                print("Step size smaller than minimum allowable- terminating")
+        except KeyboardInterrupt as _:
+            print("HALTING, returning what's been calculated so far")
             break
-        except RuntimeError as err:
-            # print(f"@S={arclen:.3f}: Failed step, decreasing step size and rejecting")
-            # reject the last step
-            s /= reduce_maxiter
-            # dS = np.linalg.norm(Xs[-1] - Xs[-2])
-            # arclen -= dS
-            # bar.update(-dS)
-            # Xs.pop()
-            # X = Xs[-1]
-            # tangent = tangent_prev
-            continue
-        if arclen == 0.0:
-            niters_prev = niters
-
-        # print(np.dot(tangent, X - Xs[-1])/s)
-        dprod_check = np.dot(tangent, X - Xs[-1]) / s
-        if dprod_check < 0.8:
-            print(
-                f"@S={arclen:.3f}: Possibly reversal, decreasing step size and rejecting"
-            )
-            # reject the last step
-            s /= reduce_reverse
-            dS = np.linalg.norm(Xs[-1] - Xs[-2])
-            arclen -= dS
-            bar.update(-dS)
-            Xs.pop()
-            X = Xs[-1]
-            tangent = tangent_prev
-
-        Xs.append(X)
-
-        eig_vals.append(np.linalg.eigvals(stm))
-
-        tangent_prev = tangent
-
-        svd = np.linalg.svd(dF)
-        tangent = svd.Vh[-1]
-        # if we flip flop, undo the flipflop
-        if np.dot(tangent, Xs[-1] - Xs[-2]) < 0:
-            tangent *= -1
-
-        arclen += s
-        bar.update(float(s))
-        s *= (niters_prev / niters) ** exp_iters * rate * dprod_check**exp_direction
-        niters_prev = niters
-
-    if s < s_min:
-        print("Step size smaller than minimum allowable- terminating")
 
     bar.close()
 
-    return Xs, eig_vals
+    return Xs, eig_vals, (DFs, tangents, s_vals)
 
 
 def natural_param_cont(
@@ -413,309 +420,51 @@ def find_bif(
             print(func_vals[-1], func_vals[-2], s)  # , X)
 
 
-# def find_per_mult(
-#     X0: NDArray,
-#     f_df_stm_func: Callable[[NDArray], Tuple[NDArray, NDArray, NDArray]],
-#     dir0: NDArray | List,
-#     s0: float = 1e-3,
-#     tol: float = 1e-10,
-#     N: int = 3,
-#     angeps=1e-4,
-#     skip: int = 0,
-# ) -> Tuple[NDArray, NDArray]:
-#     """Find find period multiplying bifurcation with period N
-
-#     Args:
-#         X0 (NDArray): initial control variables
-#         f_df_stm_func (Callable): function with signature f, df/dX, STM = f_df_func(X)
-#         dir0 (NDArray | List): rough initial stepoff direction. Is mostly just used to switch the direction of the computed tangent vector
-#         s0 (float, optional): step size. Defaults to 1e-3.
-#         tol (float, optional): tolerance for convergence. Defaults to 1e-10.
-#         N (int): multiplier
-#         angeps (float, optional): How exact does the argument need to be?
-
-#     Returns:
-#         NDArray: Bifurcation control variables, tangent vector
-#     """
-#     assert N > 1
-#     target_eigval = np.cos(2 * np.pi / N) + 1j * np.sin(2 * np.pi / N)
-
-#     s = s0
-
-#     X = X0.copy()
-#     dir0 = np.array(dir0)
-#     tangent_prev = dir0
-#     targang = 2 * np.pi / N
-
-#     _, dF, stm = f_df_stm_func(X0)
-#     # svd = np.linalg.svd(dF)
-#     tangent = tangent_prev.copy()
-
-#     Xs = [X0]
-
-#     # eigs_prev =
-#     eigs = [np.linalg.eigvals(stm)]
-#     # justSwitched = False
-
-#     while True:
-#         if np.dot(tangent, tangent_prev) < 0:
-#             tangent *= -1
-#         # if justSwitched:
-#         #     tangent *= -1
-#         #     justSwitched = False
-
-#         Xs.append(X)
-
-#         # check the argument
-#         eigs.append(np.linalg.eigvals(stm))
-#         print(eigs[-1])
-
-#         argc = np.argmin(np.abs(eigs[-1] - target_eigval))
-#         valc = eigs[-1][argc]
-#         angc = np.angle(valc)
-#         argp = np.argmin(np.abs(eigs[-2] - target_eigval))
-#         valp = eigs[-2][argp]
-#         angp = np.angle(valp)
-
-#         if N > 2:
-#             # whether weve crossed and are unit magnitude
-#             cross1 = (
-#                 (angc < targang) and (angp > targang) and abs(abs(valc) - 1) < angeps
-#             ) or abs(angc - targang) < angeps
-#             cross2 = (
-#                 (angc > targang) and (angp < targang) and abs(abs(valc) - 1) < angeps
-#             ) or abs(angc - targang) < angeps
-#         else:  # untested
-#             # whether we crossed x=-1. If we were getting closer but now we're getting further. In other words, if distance is increasing?
-
-#             # current and previous distance to -1
-#             distc = np.abs(valc + 1)
-#             distp = np.abs(valp + 1)
-
-#             cross1 = (
-#                 np.real(valc) < -1
-#                 and abs(np.imag(valc)) < angeps
-#                 and np.real(valp) > -1
+# def get_bifurcation_funcs(df, bif_type: tuple | str):
+#     if isinstance(bif_type, tuple):
+#         if len(bif_type) == 1:
+#             n = bif_type[0]
+#         elif len(bif_type) == 2:
+#             n = bif_type[0] / bif_type[1]
+#         else:
+#             raise ValueError(
+#                 "Period-multiplying bifurcation type must be given as (n,) or (n,m)"
 #             )
-#             cross2 = (
-#                 np.real(valp) < -1
-#                 and abs(np.imag(valp)) < angeps
-#                 and np.real(valc) > -1
-#             )
-#         # print(np.angle(eigs[-1]))
-#         # print(np.angle(eigs[-1]))
+#         angle = 2 * np.pi / n
+#         cos_val = np.cos(angle)
+#         bisect_func = (
+#             lambda alpha, beta: -2 * cos_val * alpha + (2 - 4 * cos_val**2) - beta
+#         )
+#     else:
+#         match bif_type.lower():
+#             case "tangent":
+#                 bisect_func = lambda alpha, beta: beta + 2 + 2 * alpha
+#             case "hopf":
+#                 bisect_func = lambda alpha, beta: beta - alpha**2 / 4 - 2
+#             case _:
+#                 raise NotImplementedError("womp womp")
 
-#         if abs(angc - targang) < angeps and skip == 0:
-#             break
-#         if cross1 or cross2:
-#             if skip > 0:
-#                 skip -= 1
-#             else:
-#                 Xs = [X]
-#                 eigs = [eigs[-1]]
-#                 tangent *= -1
-#                 s /= 10
+#     params = [
+#         "Initial x",
+#         "Initial y",
+#         "Initial z",
+#         "Initial vx",
+#         "Initial vy",
+#         "Initial vz",
+#         "Period",
+#     ]
+#     for param in params:
+#         if param not in df.columns:
+#             df[param] = 0.0
 
-#         tangent_prev = tangent
+#     eig_df = df[[col for col in df.columns if "Eig" in col]]
+#     eigs = eig_df.values.astype(np.complex128)
+#     alpha = 2 - np.sum(eigs, axis=1).real
+#     beta = (alpha**2 - (np.sum(eigs**2, axis=1).real - 2)) / 2
 
-#         svd = np.linalg.svd(dF)
-#         tangent = svd.Vh[-1]
+#     beta_bifurcate = bisect_func(alpha, beta)
 
-#         X, dF, stm_,  = dc_arclen(X, tangent, f_df_stm_func, s, tol)
-
-#     X[-1] *= N
-#     _, dF, _ = f_df_stm_func(X)
-#     svd = np.linalg.svd(dF)
-#     tangent = svd.Vh[-2]
-#     return X, tangent
-
-
-# def find_any_bif(
-#     X0: NDArray,
-#     f_df_stm_func: Callable[[NDArray], Tuple[NDArray, NDArray, NDArray]],
-#     dir0: NDArray | List,
-#     s: float = 1e-3,
-#     tol: float = 1e-10,
-#     skip_changes: int = 0,
-#     stabEps: float = 1e-5,
-# ) -> Tuple[NDArray, NDArray]:
-#     """Find bifurcation using changes in stability. This function can likely be gotten rid of
-
-#     Args:
-#         X0 (NDArray): initial control variables
-#         f_df_stm_func (Callable): function with signature f, df/dX, STM = f_df_func(X)
-#         dir0 (NDArray | List): rough initial stepoff direction. Is mostly just used to switch the direction of the computed tangent vector
-#         s (float, optional): step size. Defaults to 1e-3.
-#         tol (float, optional): tolerance for convergence. Defaults to 1e-10.
-#         skip_changes (int, optional): number of stability changes to skip. Defaults to 0.
-#         stabEps (float, optional): Arbitrary epsilon to determine when an eigenvalue = +/-1. Defaults to 1e-5.
-
-#     Returns:
-#         NDArray: Bifurcation control variables, tangent vector
-#     """
-#     X = X0.copy()
-#     tangent_prev = dir0
-
-#     _, dF, stm = f_df_stm_func(X0)
-#     svd = np.linalg.svd(dF)
-#     tangent = svd.Vh[-1]
-
-#     Xs = [X0]
-
-#     stabs_prev = [None] * 6
-
-#     while True:
-#         if np.dot(tangent, tangent_prev) < 0:
-#             tangent *= -1
-#         X, dF, stm, _ = dc_arclen(X, tangent, f_df_stm_func, s, tol)
-
-#         Xs.append(X)
-
-#         # eval_norms = np.sort(np.abs(eig_vals[-1]))[3:]
-#         stabs = sorted([get_stab(e, stabEps) for e in np.linalg.eigvals(stm)])
-
-#         tangent_prev = tangent
-
-#         # tangent = null_space(dF)
-#         svd = np.linalg.svd(dF)
-#         tangent = svd.Vh[-1]
-
-#         if stabs != stabs_prev and None not in stabs_prev:
-#             # if abs(svd.S[-2]) <= 0.5:
-#             # if svd.
-#             if skip_changes == 0:
-#                 tangent = svd.Vh[-2]
-#                 print(f"BIFURCATING @ X={X} in the direction of {tangent}")
-#                 return X, tangent
-#             else:
-#                 skip_changes -= 1
-#             # else:
-#             #     pass
-
-#         stabs_prev = stabs
-
-
-def arclen_to_fail(
-    X0: NDArray,
-    f_df_stm_func: Callable[[NDArray], Tuple[NDArray, NDArray, NDArray]],
-    dir0: NDArray | List,
-    s0: float = 1e-3,
-    tol: float = 1e-10,
-    max_iter: int = 10,
-    multiplier: float = 1.01,
-    wait: int = 100,
-) -> Tuple[List, List]:
-    """Arclength continuation until fail.
-
-    Args:
-        X0 (NDArray): initial control variables
-        f_df_stm_func (Callable): function with signature f, df/dX, STM = f_df_func(X)
-        dir0 (NDArray | List): rough initial stepoff direction. Is mostly just used to switch the direction of the computed tangent vector
-        s0 (float, optional): initial step size. Defaults to 1e-3.
-        tol (float, optional): tolerance for convergence. Defaults to 1e-10.
-        max_iter (int): number of iterations to fail at
-        multiplier (float): multiply step size by this
-        wait (int): after this many steps
-
-    Returns:
-        Tuple[List, List]: all Xs, all eigenvalues
-    """
-
-    X = X0.copy()
-    tangent_prev = dir0.copy()
-    tangent = dir0.copy()
-
-    _, dF, stm = f_df_stm_func(X0)
-    svd = np.linalg.svd(dF)
-
-    Xs = [X0]
-    eig_vals = [np.linalg.eigvals(stm)]
-
-    bar = tqdm(total=0)
-    arclen = 0.0
-
-    s = s0
-    lastInc = 0
-
-    # ensure that the stopping condition hasnt been satisfied
-    while True:
-        if arclen - lastInc > wait * s:
-            s *= multiplier
-        # if we flip flop, undo the flipflop
-        if np.dot(tangent, tangent_prev) < 0:
-            tangent *= -1
-        try:
-            X, dF, stm = dc_arclen(
-                X, tangent, f_df_stm_func, s, tol, True, max_iter=max_iter
-            )
-        except Exception as err:
-            print(f"Runtime error encountered: {err}")
-            print("returning what's been calculated so far")
-            break
-
-        Xs.append(X)
-
-        eig_vals.append(np.linalg.eigvals(stm))
-        dS = s
-
-        tangent_prev = tangent
-
-        svd = np.linalg.svd(dF)
-        tangent = svd.Vh[-1]
-
-        arclen += dS
-        bar.update(float(dS))
-
-    bar.close()
-
-    return Xs, eig_vals
-
-
-def get_bifurcation_funcs(df, bif_type: tuple | str):
-    if isinstance(bif_type, tuple):
-        if len(bif_type) == 1:
-            n = bif_type[0]
-        elif len(bif_type) == 2:
-            n = bif_type[0] / bif_type[1]
-        else:
-            raise ValueError(
-                "Period-multiplying bifurcation type must be given as (n,) or (n,m)"
-            )
-        angle = 2 * np.pi / n
-        cos_val = np.cos(angle)
-        bisect_func = (
-            lambda alpha, beta: -2 * cos_val * alpha + (2 - 4 * cos_val**2) - beta
-        )
-    else:
-        match bif_type.lower():
-            case "tangent":
-                bisect_func = lambda alpha, beta: beta + 2 + 2 * alpha
-            case "hopf":
-                bisect_func = lambda alpha, beta: beta - alpha**2 / 4 - 2
-            case _:
-                raise NotImplementedError("womp womp")
-
-    params = [
-        "Initial x",
-        "Initial y",
-        "Initial z",
-        "Initial vx",
-        "Initial vy",
-        "Initial vz",
-        "Period",
-    ]
-    for param in params:
-        if param not in df.columns:
-            df[param] = 0.0
-
-    eig_df = df[[col for col in df.columns if "Eig" in col]]
-    eigs = eig_df.values.astype(np.complex128)
-    alpha = 2 - np.sum(eigs, axis=1).real
-    beta = (alpha**2 - (np.sum(eigs**2, axis=1).real - 2)) / 2
-
-    beta_bifurcate = bisect_func(alpha, beta)
-
-    func = beta - beta_bifurcate
-    inds = df.index
-    spline_dict = {param: UnivariateSpline(inds, df[param]) for param in params}
-    return UnivariateSpline(inds, func), spline_dict
+#     func = beta - beta_bifurcate
+#     inds = df.index
+#     spline_dict = {param: UnivariateSpline(inds, df[param]) for param in params}
+#     return UnivariateSpline(inds, func), spline_dict
