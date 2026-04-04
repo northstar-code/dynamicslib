@@ -178,8 +178,9 @@ def adaptive_cont(
     niters = 0
 
     # ensure that the stopping condition hasnt been satisfied
-    while arclen < S and s >= s_min:
-        try:
+
+    try:
+        while arclen < S and s >= s_min:
             bar.set_description(f"s = {s:.3e}")
             try:
                 X, dF, stm, niters = dc_arclen(
@@ -231,14 +232,17 @@ def adaptive_cont(
                 tangent *= -1
 
             bar.update(float(s))
-            s *= (target_iter / niters) ** exp_iters * rate * dprod_check**exp_direction
+            s *= (target_iter / niters) ** exp_iters * dprod_check**exp_direction
+            if niters <= target_iter:
+                s *= rate
 
             if s < s_min:
                 print("Step size smaller than minimum allowable- terminating")
-        except KeyboardInterrupt as _:
-            print("HALTING, returning what's been calculated so far")
-            break
-
+    except KeyboardInterrupt as _:
+        print("HALTING, returning what's been calculated so far")
+    except SystemError as _:
+        print("System Err, returning what's been calculated so far")
+        
     bar.close()
 
     return Xs, eig_vals, (DFs, tangents, s_vals)

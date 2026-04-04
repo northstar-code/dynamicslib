@@ -65,70 +65,263 @@ def get_Lpts(mu: float = muEM):
 
 # %% spatial
 
+# more readable but slower versions:
+# @njit(cache=True)
+# def U_hess(pos: NDArray[np.floating], mu: float = muEM) -> NDArray[np.floating]:
+#     r1 = pos - np.array([-mu, 0, 0])
+#     r2 = pos - np.array([1 - mu, 0, 0])
+#     r1mag = np.linalg.norm(r1)
+#     r2mag = np.linalg.norm(r2)
+#     Uxx = (
+#         np.diag(np.array([1, 1, 0]))
+#         + 3 * (1 - mu) / r1mag**5 * np.outer(r1, r1)
+#         - (1 - mu) / r1mag**3 * np.eye(3)
+#         + 3 * mu / r2mag**5 * np.outer(r2, r2)
+#         - mu / r2mag**3 * np.eye(3)
+#     )
+
+#     return Uxx
+
+# @njit(cache=True)
+# def get_A(state: NDArray[np.floating], mu: float = muEM) -> NDArray[np.floating]:
+#     pos = state[:3]
+#     Uxx = U_hess(pos, mu)
+#     O = np.zeros((3, 3))
+#     I = np.eye(3)
+#     Omega = np.array([[0, 2, 0], [-2, 0, 0], [0, 0, 0]])
+#     A1 = np.concatenate((O, I), axis=1)
+#     A2 = np.concatenate((Uxx, Omega), axis=1)
+#     A = np.concatenate((A1, A2), axis=0)
+#     return A
+
+# @njit(cache=True)
+# def eom(_, state: NDArray[np.floating], mu: float = muEM) -> NDArray[np.floating]:
+#     x, y, z, vx, vy, vz = state[:6]
+#     xyz = state[:3]
+#     r1vec = xyz + np.array([mu, 0, 0])
+#     r2vec = xyz + np.array([mu - 1, 0, 0])
+#     r1mag = np.linalg.norm(r1vec)
+#     r2mag = np.linalg.norm(r2vec)
+
+#     ddxyz = (
+#         -(1 - mu) * r1vec / r1mag**3
+#         - mu * r2vec / r2mag**3
+#         + np.array([2 * vy + x, -2 * vx + y, 0])
+#     )
+
+#     dstate = np.zeros(6)
+#     dstate[:3] = state[3:]
+#     dstate[3:] = ddxyz
+#     return dstate
+
+# @njit(cache=True)
+# def coupled_stm_eom(
+#     _, state: NDArray[np.floating], mu: float = muEM
+# ) -> NDArray[np.floating]:
+#     pv = state[:6]
+#     dpv = eom(0.0, pv, mu)
+#     stm = state[6:].reshape((6, 6))
+#     A = get_A(pv, mu)  # pv[:3]
+#     dstm = A @ stm
+
+#     dstate = np.array([*dpv, *dstm.flatten()])
+#     return dstate
+
 
 @njit(cache=True)
 def U_hess(pos: NDArray[np.floating], mu: float = muEM) -> NDArray[np.floating]:
-    r1 = pos - np.array([-mu, 0, 0])
-    r2 = pos - np.array([1 - mu, 0, 0])
-    r1mag = np.linalg.norm(r1)
-    r2mag = np.linalg.norm(r2)
-    Uxx = (
-        np.diag(np.array([1, 1, 0]))
-        + 3 * (1 - mu) / r1mag**5 * np.outer(r1, r1)
-        - (1 - mu) / r1mag**3 * np.eye(3)
-        + 3 * mu / r2mag**5 * np.outer(r2, r2)
-        - mu / r2mag**3 * np.eye(3)
-    )
+    x, y, z = pos[0], pos[1], pos[2]
 
-    return Uxx
+    x1 = x + mu
+    x2 = x - 1.0 + mu
+
+    r1sq = x1 * x1 + y * y + z * z
+    r2sq = x2 * x2 + y * y + z * z
+
+    r1 = np.sqrt(r1sq)
+    r2 = np.sqrt(r2sq)
+
+    r1_3 = r1sq * r1
+    r1_5 = r1_3 * r1sq
+    r2_3 = r2sq * r2
+    r2_5 = r2_3 * r2sq
+
+    c1 = 1.0 - mu
+    c2 = mu
+
+    # Precompute factors
+    a1 = 3.0 * c1 / r1_5
+    b1 = c1 / r1_3
+    a2 = 3.0 * c2 / r2_5
+    b2 = c2 / r2_3
+
+    H = np.empty((3, 3))
+
+    # Diagonal
+    H[0, 0] = 1.0 + a1 * x1 * x1 - b1 + a2 * x2 * x2 - b2
+    H[1, 1] = 1.0 + a1 * y * y - b1 + a2 * y * y - b2
+    H[2, 2] = a1 * z * z - b1 + a2 * z * z - b2
+
+    # Off-diagonal (symmetric)
+    H[0, 1] = a1 * x1 * y + a2 * x2 * y
+    H[1, 0] = H[0, 1]
+
+    H[0, 2] = a1 * x1 * z + a2 * x2 * z
+    H[2, 0] = H[0, 2]
+
+    H[1, 2] = a1 * y * z + a2 * y * z
+    H[2, 1] = H[1, 2]
+
+    return H
 
 
 @njit(cache=True)
 def get_A(state: NDArray[np.floating], mu: float = muEM) -> NDArray[np.floating]:
-    pos = state[:3]
-    Uxx = U_hess(pos, mu)
-    O = np.zeros((3, 3))
-    I = np.eye(3)
-    Omega = np.array([[0, 2, 0], [-2, 0, 0], [0, 0, 0]])
-    A1 = np.concatenate((O, I), axis=1)
-    A2 = np.concatenate((Uxx, Omega), axis=1)
-    A = np.concatenate((A1, A2), axis=0)
+    x, y, z = state[0], state[1], state[2]
+
+    Uxx = U_hess(state, mu)  # or pass pos explicitly
+
+    A = np.zeros((6, 6))
+
+    # identity block
+    A[0, 3] = 1.0
+    A[1, 4] = 1.0
+    A[2, 5] = 1.0
+
+    # Hessian
+    for i in range(3):
+        for j in range(3):
+            A[i + 3, j] = Uxx[i, j]
+
+    # cross block
+    A[3, 4] = 2.0
+    A[4, 3] = -2.0
+
     return A
 
 
 @njit(cache=True)
 def eom(_, state: NDArray[np.floating], mu: float = muEM) -> NDArray[np.floating]:
-    x, y, z, vx, vy, vz = state[:6]
-    xyz = state[:3]
-    r1vec = xyz + np.array([mu, 0, 0])
-    r2vec = xyz + np.array([mu - 1, 0, 0])
-    r1mag = np.linalg.norm(r1vec)
-    r2mag = np.linalg.norm(r2vec)
+    x, y, z = state[0], state[1], state[2]
+    vx, vy, vz = state[3], state[4], state[5]
 
-    ddxyz = (
-        -(1 - mu) * r1vec / r1mag**3
-        - mu * r2vec / r2mag**3
-        + np.array([2 * vy + x, -2 * vx + y, 0])
-    )
+    x1 = x + mu
+    x2 = x - 1.0 + mu
 
-    dstate = np.zeros(6)
-    dstate[:3] = state[3:]
-    dstate[3:] = ddxyz
-    return dstate
+    r1sq = x1 * x1 + y * y + z * z
+    r2sq = x2 * x2 + y * y + z * z
+
+    inv_r1 = 1.0 / np.sqrt(r1sq)
+    inv_r2 = 1.0 / np.sqrt(r2sq)
+
+    inv_r1_3 = inv_r1 / r1sq
+    inv_r2_3 = inv_r2 / r2sq
+
+    c1 = 1.0 - mu
+    c2 = mu
+
+    # Allocate output once
+    out = np.empty(6)
+
+    # velocity part
+    out[0] = vx
+    out[1] = vy
+    out[2] = vz
+
+    # acceleration (fully expanded)
+    out[3] = -c1 * x1 * inv_r1_3 - c2 * x2 * inv_r2_3 + 2.0 * vy + x
+    out[4] = -c1 * y * inv_r1_3 - c2 * y * inv_r2_3 - 2.0 * vx + y
+    out[5] = -c1 * z * inv_r1_3 - c2 * z * inv_r2_3
+
+    return out
 
 
 @njit(cache=True)
 def coupled_stm_eom(
     _, state: NDArray[np.floating], mu: float = muEM
 ) -> NDArray[np.floating]:
-    pv = state[:6]
-    dpv = eom(0.0, pv, mu)
-    stm = state[6:].reshape((6, 6))
-    A = get_A(pv, mu)  # pv[:3]
-    dstm = A @ stm
+    # rewriting in one block to avoid some recalculation overhead
+    out = np.empty(42)
+    x, y, z = state[0], state[1], state[2]
+    vx, vy, vz = state[3], state[4], state[5]
 
-    dstate = np.array([*dpv, *dstm.flatten()])
-    return dstate
+    c1 = 1.0 - mu
+    c2 = mu
+
+    x1 = x + mu
+    x2 = x - 1 + mu
+
+    r1sq = x1 * x1 + y * y + z * z
+    r2sq = x2 * x2 + y * y + z * z
+
+    inv_r1 = 1.0 / np.sqrt(r1sq)
+    inv_r2 = 1.0 / np.sqrt(r2sq)
+
+    inv_r1_3 = inv_r1 / r1sq
+    inv_r2_3 = inv_r2 / r2sq
+
+    inv_r1_5 = inv_r1_3 / r1sq
+    inv_r2_5 = inv_r2_3 / r2sq
+
+    # state dynamics
+    out[0] = vx
+    out[1] = vy
+    out[2] = vz
+    out[3] = -c1 * x1 * inv_r1_3 - c2 * x2 * inv_r2_3 + 2.0 * vy + x
+    out[4] = -c1 * y * inv_r1_3 - c2 * y * inv_r2_3 - 2.0 * vx + y
+    out[5] = -c1 * z * inv_r1_3 - c2 * z * inv_r2_3
+
+    ## A matrix
+
+    # Hessian
+    a1 = 3.0 * c1 * inv_r1_5
+    b1 = c1 * inv_r1_3
+    a2 = 3.0 * c2 * inv_r2_5
+    b2 = c2 * inv_r2_3
+
+    H = np.empty((3, 3))
+
+    # Diagonal
+    H[0, 0] = 1.0 + a1 * x1 * x1 - b1 + a2 * x2 * x2 - b2
+    H[1, 1] = 1.0 + a1 * y * y - b1 + a2 * y * y - b2
+    H[2, 2] = a1 * z * z - b1 + a2 * z * z - b2
+
+    # Off-diagonal (symmetric)
+    H[0, 1] = a1 * x1 * y + a2 * x2 * y
+    H[1, 0] = H[0, 1]
+
+    H[0, 2] = a1 * x1 * z + a2 * x2 * z
+    H[2, 0] = H[0, 2]
+
+    H[1, 2] = a1 * y * z + a2 * y * z
+    H[2, 1] = H[1, 2]
+
+    # A matrix
+    A = np.zeros((6, 6))
+
+    # identity block
+    A[0, 3] = 1.0
+    A[1, 4] = 1.0
+    A[2, 5] = 1.0
+
+    # Hessian
+    for i in range(3):
+        for j in range(3):
+            A[i + 3, j] = H[i, j]
+
+    # cross block
+    A[3, 4] = 2.0
+    A[4, 3] = -2.0
+
+    # manual 6x6 multiply: dstm = A @ stm
+    for i in range(6):
+        for j in range(6):
+            s = 0.0
+            for k in range(6):
+                s += A[i, k] * state[6 + 6 * k + j]
+            out[6 + 6 * i + j] = s
+
+    return out
 
 
 # %% planar
