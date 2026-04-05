@@ -240,8 +240,7 @@ def eom(_, state: NDArray[np.floating], mu: float = muEM) -> NDArray[np.floating
 def coupled_stm_eom(
     _, state: NDArray[np.floating], mu: float = muEM
 ) -> NDArray[np.floating]:
-    # rewriting in one block to avoid some recalculation overhead
-    out = np.empty(42)
+    out = np.zeros(42)
     x, y, z = state[0], state[1], state[2]
     vx, vy, vz = state[3], state[4], state[5]
 
@@ -296,30 +295,23 @@ def coupled_stm_eom(
     H[1, 2] = a1 * y * z + a2 * y * z
     H[2, 1] = H[1, 2]
 
-    # A matrix
-    A = np.zeros((6, 6))
-
-    # identity block
-    A[0, 3] = 1.0
-    A[1, 4] = 1.0
-    A[2, 5] = 1.0
-
-    # Hessian
+    # expanded matrix multiplication
     for i in range(3):
-        for j in range(3):
-            A[i + 3, j] = H[i, j]
+        ip3 = i + 3
+        for j in range(6):
+            # dense block (bottom left)
+            s = 0.0
+            for a in range(3):
+                s += H[i, a] * state[6 + 6 * a + j]
+            out[6 + 6 * ip3 + j] = s
+
+            # identity block (top right)
+            out[6 + 6 * i + j] += state[6 + 6 * ip3 + j]
 
     # cross block
-    A[3, 4] = 2.0
-    A[4, 3] = -2.0
-
-    # manual 6x6 multiply: dstm = A @ stm
-    for i in range(6):
-        for j in range(6):
-            s = 0.0
-            for k in range(6):
-                s += A[i, k] * state[6 + 6 * k + j]
-            out[6 + 6 * i + j] = s
+    for j in range(6):
+        out[6 + 6 * 3 + j] += 2 * state[6 + 6 * 4 + j]
+        out[6 + 6 * 4 + j] += -2 * state[6 + 6 * 3 + j]
 
     return out
 
