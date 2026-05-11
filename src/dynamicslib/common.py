@@ -177,8 +177,6 @@ def U_hess(pos: NDArray[np.floating], mu: float = muEM) -> NDArray[np.floating]:
 
 @njit(cache=True)
 def get_A(state: NDArray[np.floating], mu: float = muEM) -> NDArray[np.floating]:
-    x, y, z = state[0], state[1], state[2]
-
     Uxx = U_hess(state, mu)  # or pass pos explicitly
 
     A = np.zeros((6, 6))

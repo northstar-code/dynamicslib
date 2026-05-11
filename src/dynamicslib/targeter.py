@@ -7,13 +7,13 @@ def dc_arclen(
     f_df_func: Callable,
     s: float = 1e-3,
     tol: float = 1e-8,
-    modified: bool = True,
+    pseudo: bool = False,
     max_iter: int | None = None,
     fudge: float | None = None,
     max_step: float | None = None,
     debug: bool = False,
 ) -> Tuple[NDArray, NDArray, NDArray, int]:
-    """Pseudoarclength continuation differential corrector. The modified algorithm has a full step size of s, rather than projected step size.
+    """(Pseudo)arclength continuation differential corrector. The modified algorithm has a full step size of s, rather than projected step size.
 
     Args:
         X_prev (NDArray): previous control variables
@@ -21,7 +21,7 @@ def dc_arclen(
         f_df_func (Callable): function with signature f, df/dX, STM = f_df_func(X)
         s (float, optional): step size. Defaults to 1e-3.
         tol (float, optional): tolerance for convergence. Defaults to 1e-8.
-        modified (boolean, optional): whether to use modified algorithm. Defaults to True.
+        pseudo (boolean, optional): whether to use pseudoarclength or my own custom algorithm. Defaults to my own (pseudo=False).
         max_iter (int): maximum number of iterations
         fudge (float): multiply step by this much
 
@@ -45,8 +45,8 @@ def dc_arclen(
             raise RuntimeError("Exceeded maximum iterations")
         f, dF, stm_full = f_df_func(X)
         delta = X - X_prev
-        lastG = np.dot(delta, delta) - s**2 if modified else np.dot(delta, tangent) - s
-        lastDG = 2 * delta if modified else tangent
+        lastG = np.dot(delta, tangent) - s if pseudo else np.dot(delta, delta) - s**2
+        lastDG = tangent if pseudo else 2 * delta
         G = np.array([*f, lastG])
         dG = np.vstack((dF, lastDG))
         dX = -np.linalg.inv(dG) @ G

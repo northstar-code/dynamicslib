@@ -125,6 +125,7 @@ def adaptive_cont(
     exp_direction: float = 10.0,
     exp_iters: float = 0.3,
     exact_tangent: bool = False,
+    pseudo: bool = False,
 ) -> Tuple[List, List, Tuple[List, List, List]]:
     """Custom arclength-based continuation wrapper with variable step size. This modified algorithm has a full step size of s, rather than projected step size.
     At each step, the step size multiplies by num_iters/num_iters_previous, in so that if it takes longer to converge we reduce the step size
@@ -143,7 +144,7 @@ def adaptive_cont(
         reduce_maxiter (float, optional): If we hit the maximum iterations on one attempt, reduce the step size by a factor of this much
         reduce_reverse (float, optional): If there's a possibility that the solution curve is reversing backward on itself, reduce the step size by a factor of this much
         exact_tangent (bool, optional): whether the tangent vector `dir0` passed in is exact or approximate. If approximate, it is only used to check direction with a dot product. Otherwise, it is used as-is.
-
+        pseudo (bool, optional): whether to use pseudoarclength rather than custom method
 
     Returns:
         Tuple[List, List]: all Xs, all eigenvalues
@@ -184,7 +185,7 @@ def adaptive_cont(
             bar.set_description(f"s = {s:.3e}")
             try:
                 X, dF, stm, niters = dc_arclen(
-                    X, tangent, f_df_stm_func, s, tol, modified=True, max_iter=max_iter
+                    X, tangent, f_df_stm_func, s, tol, pseudo=pseudo, max_iter=max_iter
                 )
             except np.linalg.LinAlgError as err:
                 print(f"Linear algebra error encountered: {err}")
@@ -215,12 +216,13 @@ def adaptive_cont(
                 s_vals.pop()
                 X = Xs[-1]
                 tangent = tangent_prev
+                continue
 
             Xs.append(X)
             tangents.append(tangent)
             eig_vals.append(np.linalg.eigvals(stm))
             DFs.append(dF)
-            arclen += s
+            arclen += s if not pseudo else np.linalg.norm(Xs[-1] - Xs[-2])
             s_vals.append(arclen)
 
             tangent_prev = tangent
@@ -242,7 +244,7 @@ def adaptive_cont(
         print("HALTING, returning what's been calculated so far")
     except SystemError as _:
         print("System Err, returning what's been calculated so far")
-        
+
     bar.close()
 
     return Xs, eig_vals, (DFs, tangents, s_vals)
