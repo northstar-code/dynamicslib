@@ -240,6 +240,10 @@ def adaptive_cont(
 
             if s < s_min:
                 print("Step size smaller than minimum allowable- terminating")
+
+            if halt_when is not None and halt_when(X):
+                print("HALTING ON COMMAND")
+                break
     except KeyboardInterrupt as _:
         print("HALTING, returning what's been calculated so far")
     except SystemError as _:
@@ -247,6 +251,158 @@ def adaptive_cont(
 
     bar.close()
 
+    return Xs, eig_vals, (DFs, tangents, s_vals)
+
+
+def cont_paper(
+    X0: NDArray,
+    f_df_stm_func: Callable[[NDArray], Tuple[NDArray, NDArray, NDArray]],
+    dir0: NDArray | List,
+    s0: float = 1e-2,
+    s_min: float = 1e-3,
+    S: float = 0.5,
+    tol: float = 1e-10,
+    max_iter: int = 10,
+    target_iter: int = 6,
+    rate: float = 1.15,
+    reduce_maxiter: float = 5.0,
+    reduce_reverse: float = 2.0,
+    exp_direction: float = 10.0,
+    exp_iters: float = 0.3,
+    exact_tangent: bool = False,
+    pseudo: bool = False,
+    halt_when: Callable | None = None,
+) -> Tuple[List, List, Tuple[List, List, List]]:
+    """Custom arclength-based continuation wrapper with variable step size. This modified algorithm has a full step size of s, rather than projected step size.
+    At each step, the step size multiplies by num_iters/num_iters_previous, in so that if it takes longer to converge we reduce the step size
+    At each step, the step size also multiplies by the dot product between the tangent vector and the step; if this dot product is close to 1, then the curve is not sharp and step size wont be reduced. Else, it will.
+    At each step, the step size also multiplies by the parameter `rate`, which should be >1 to ensure step size can recover
+
+    Args:
+        X0 (NDArray): initial control variables
+        f_df_stm_func (Callable): function with signature f, df/dX, STM = f_df_func(X)
+        dir0 (NDArray | List): rough initial stepoff direction. Is mostly just used to switch the direction of the computed tangent vector
+        s (float, optional): step size. Defaults to 1e-3.
+        S (float, optional): terminate at this arclength. Defaults to 0.5.
+        tol (float, optional): tolerance for convergence. Defaults to 1e-10.
+        max_iter: (int | None, optional): maximum number of iterations. Will return what it's computed so far if it exceeds that
+        rate (float, optional): the rate of increase of step size in the absense of any other change
+        reduce_maxiter (float, optional): If we hit the maximum iterations on one attempt, reduce the step size by a factor of this much
+        reduce_reverse (float, optional): If there's a possibility that the solution curve is reversing backward on itself, reduce the step size by a factor of this much
+        exact_tangent (bool, optional): whether the tangent vector `dir0` passed in is exact or approximate. If approximate, it is only used to check direction with a dot product. Otherwise, it is used as-is.
+        pseudo (bool, optional): whether to use pseudoarclength rather than custom method
+
+    Returns:
+        Tuple[List, List]: all Xs, all eigenvalues
+    """
+    assert rate >= 1
+    assert reduce_maxiter > 1
+    assert reduce_reverse > 1
+    assert max_iter > target_iter
+
+    X = X0.copy()
+    tangent_prev = dir0 / np.linalg.norm(dir0)
+
+    _, dF, stm = f_df_stm_func(X0)
+    svd = np.linalg.svd(dF)
+    tangent = tangent_prev.copy() if exact_tangent else svd.Vh[-1]
+
+    # # if the direction we asked for is normal to the computed tangent, use the second-most tangent vector
+    # if np.abs(np.dot(tangent, dir0)) < 1e-5:
+    #     print("RESETTING")
+    #     tangent = svd.Vh[-1]
+
+    Xs = [X0]
+    eig_vals = [np.linalg.eigvals(stm)]
+    tangents = [tangent.copy()]
+    DFs = [dF]
+    s_vals = [0]
+
+    bar = tqdm(total=S)
+    arclen = 0.0
+    s = s0
+
+    tot_iters = 0
+    niters = 0
+
+    # ensure that the stopping condition hasnt been satisfied
+
+    try:
+        while arclen < S and s >= s_min:
+            bar.set_description(f"s = {s:.3e}")
+            try:
+                X, dF, stm, niters = dc_arclen(
+                    X, tangent, f_df_stm_func, s, tol, pseudo=pseudo, max_iter=max_iter
+                )
+                tot_iters += niters
+            except np.linalg.LinAlgError as err:
+                print(f"Linear algebra error encountered: {err}")
+                print("returning what's been calculated so far")
+                break
+            except KeyboardInterrupt as err:
+                print("HALTING, returning what's been calculated so far")
+                break
+            except RuntimeError as err:
+                print("Rejecting step")
+                s /= reduce_maxiter
+                continue
+
+            # print(np.dot(tangent, X - Xs[-1])/s)
+            if pseudo:
+                dprod_check = np.dot(tangent, X - Xs[-1]) / s
+                if dprod_check < 0.8:
+                    print(
+                        f"@S={arclen:.3f}: Possibly reversal, decreasing step size and rejecting"
+                    )
+                    # reject the last step
+                    s /= reduce_reverse
+                    dS = np.linalg.norm(Xs[-1] - Xs[-2])
+                    arclen -= dS
+                    bar.update(-dS)
+                    Xs.pop()
+                    tangents.pop()
+                    DFs.pop()
+                    s_vals.pop()
+                    X = Xs[-1]
+                    tangent = tangent_prev
+                    continue
+
+            Xs.append(X)
+            tangents.append(tangent)
+            eig_vals.append(np.linalg.eigvals(stm))
+            DFs.append(dF)
+            arclen += s if not pseudo else np.linalg.norm(Xs[-1] - Xs[-2])
+            s_vals.append(arclen)
+
+            tangent_prev = tangent
+
+            svd = np.linalg.svd(dF)
+            tangent = svd.Vh[-1]
+            # if we flip flop, undo the flipflop
+            if np.dot(tangent, Xs[-1] - Xs[-2]) < 0:
+                tangent *= -1
+
+            bar.update(float(s))
+            s *= (target_iter / niters) ** exp_iters
+            if pseudo:
+                s *= dprod_check**exp_direction
+            if niters <= target_iter:
+                s *= rate
+
+            if s < s_min:
+                print("Step size smaller than minimum allowable- terminating")
+
+            if halt_when is not None and halt_when(X):
+                print("HALTING ON COMMAND")
+                break
+    except KeyboardInterrupt as _:
+        print("HALTING, returning what's been calculated so far")
+    except SystemError as _:
+        print("System Err, returning what's been calculated so far")
+
+    bar.close()
+
+    print(f"Finished in {tot_iters}")
     return Xs, eig_vals, (DFs, tangents, s_vals)
 
 
