@@ -207,13 +207,14 @@ def adaptive_cont(
                 )
                 # reject the last step
                 s /= reduce_reverse
-                dS = np.linalg.norm(Xs[-1] - Xs[-2])
-                arclen -= dS
-                bar.update(-dS)
-                Xs.pop()
-                tangents.pop()
-                DFs.pop()
-                s_vals.pop()
+                if len(Xs)>1:
+                    dS = np.linalg.norm(Xs[-1] - Xs[-2])
+                    arclen -= dS
+                    bar.update(-dS)
+                    Xs.pop()
+                    tangents.pop()
+                    DFs.pop()
+                    s_vals.pop()
                 X = Xs[-1]
                 tangent = tangent_prev
                 continue
@@ -241,9 +242,6 @@ def adaptive_cont(
             if s < s_min:
                 print("Step size smaller than minimum allowable- terminating")
 
-            if halt_when is not None and halt_when(X):
-                print("HALTING ON COMMAND")
-                break
     except KeyboardInterrupt as _:
         print("HALTING, returning what's been calculated so far")
     except SystemError as _:

@@ -631,7 +631,7 @@ def plotly_display(
                         ),
                     ],
                 ),
-            ]
+            ],
         )
 
     # Dash dropdowns
@@ -1071,14 +1071,16 @@ def test_new_family(
     vals_dict = {}
     for fname in filenames:
         path = root + fname + ".csv"
-        db = pd.read_csv(path, engine='pyarrow').set_index("Index")
+        db = pd.read_csv(path, engine="pyarrow").set_index("Index")
         for col in ["Initial " + state for state in ["x", "y", "z", "vx", "vy", "vz"]]:
             if col in db.columns and np.all(np.abs(db[col]) < 1e-9):
                 db = db.drop(columns=col)
         cols = db.columns
         periods = db["Period"]
         jcs = db["Jacobi Constant"]
-        orbtype = "Spatial" if (("Initial z" in cols) or ("Initial vz" in cols)) else "Planar"
+        orbtype = (
+            "Spatial" if (("Initial z" in cols) or ("Initial vz" in cols)) else "Planar"
+        )
         if orbtype == newtype:
             vals_dict[fname] = {
                 "Period": periods.values,
@@ -1202,7 +1204,6 @@ def gui(
     df = full_dataframe[param_names].astype(np.float32)
     df = df.drop_duplicates(subset=param_names, keep="first", ignore_index=False)
     vals = df[param_names[:-1]].values
-    
 
     ind0 = np.searchsorted(df.index, 0)
     # arclength (parameterize by this)
@@ -1220,9 +1221,7 @@ def gui(
 
     thta = np.linspace(0, 2 * np.pi, 1000)
     if not is2d:
-        curve = plotly_curve(
-            [np.nan], [np.nan], [np.nan], color=color, width=2
-        )
+        curve = plotly_curve([np.nan], [np.nan], [np.nan], color=color, width=2)
         dot = go.Scatter3d(
             x=[np.nan],
             y=[np.nan],
@@ -1235,7 +1234,7 @@ def gui(
             y=np.sin(thta),
             z=0 * thta,
             mode="lines",
-            line=dict(dash='dash',color="grey", width=3),
+            line=dict(dash="dash", color="grey", width=3),
             hoverinfo="none",
         )
         bodyref = go.Scatter3d(
@@ -1257,9 +1256,7 @@ def gui(
             marker=dict(color="grey", size=5),
         )
     else:
-        curve = plotly_curve_2d(
-            [np.nan], [np.nan], color=color, width=1
-        )
+        curve = plotly_curve_2d([np.nan], [np.nan], color=color, width=1)
         dot = go.Scatter(
             x=[np.nan], y=[np.nan], mode="markers", marker=dict(color=color, size=5)
         )
@@ -1267,7 +1264,7 @@ def gui(
             x=np.cos(thta),
             y=np.sin(thta),
             mode="lines",
-            line=dict(dash='dash',color="grey", width=1),
+            line=dict(dash="dash", color="grey", width=1),
             hoverinfo="none",
         )
         bodyref = go.Scatter(
@@ -1390,7 +1387,7 @@ def gui(
 
     # app = Dash()
     app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.themes.CYBORG])
-    
+
     #fmt: off
     app.layout = dbc.Container([
     dbc.Row([
@@ -1435,7 +1432,6 @@ def gui(
     dcc.Interval(id="timer", interval=1000 / framerate, disabled=True)])
     ], fluid=True)
     # fmt: on
-    
 
     @callback(
         Output("display", "figure", allow_duplicate=True),
@@ -1601,11 +1597,10 @@ def gui(
     update_curve(s0 / smax, "CR3BP", 1, fig)
     print("\t\tCompiled")
     app.run(debug=False, use_reloader=False, jupyter_mode="inline", port=port)
-    
-    
+
 
 def gui2(
-    db_path:str,
+    db_path: str,
     targ: Targetter,
     targ_tol: float = 1e-4,
     int_tol: float = 1e-13,
@@ -1615,8 +1610,8 @@ def gui2(
     color="white",
     n_time: int = 500,
     framerate=20,
-    max_iter:int=10,
-    debug:bool=False
+    max_iter: int = 10,
+    debug: bool = False,
 ):
     """Displays an animatable figure in either 2D or 3D of an individual member of the selected family.
     A slider controls coarse initial state estimate, and the passed targetter is used to converge. A button
@@ -1636,27 +1631,29 @@ def gui2(
     Returns:
         None
     """
-    filenames = [file.removesuffix(".csv") for file in os.listdir(db_path) if file.endswith(".csv")]
+    filenames = [
+        file.removesuffix(".csv")
+        for file in os.listdir(db_path)
+        if file.endswith(".csv")
+    ]
     filenames = ["Select Family"] + filenames
     thta = np.linspace(0, 2 * np.pi, 1000)
-    curve = plotly_curve(
-        [np.nan], [np.nan], [np.nan], color=color, width=2
-    )
+    curve = plotly_curve([np.nan], [np.nan], [np.nan], color=color, width=2)
     dot = go.Scatter3d(
         x=[np.nan],
         y=[np.nan],
         z=[np.nan],
         mode="markers",
-        marker=dict(color=color, size=5)
+        marker=dict(color=color, size=5),
     )
     bodycurve = go.Scatter3d(
         x=np.cos(thta),
         y=np.sin(thta),
         z=0 * thta,
         mode="lines",
-        line=dict(dash='dash',color="grey", width=3),
+        line=dict(dash="dash", color="grey", width=3),
         hoverinfo="none",
-        visible=False
+        visible=False,
     )
     bodyref = go.Scatter3d(
         x=[0],
@@ -1666,7 +1663,7 @@ def gui2(
         name="Central Body",
         hoverinfo="name",
         marker=dict(color="grey", size=5),
-        visible=False
+        visible=False,
     )
     bodyoth = go.Scatter3d(
         x=[np.nan],
@@ -1676,31 +1673,31 @@ def gui2(
         name="Other Body",
         hoverinfo="name",
         marker=dict(color="grey", size=5),
-        visible=False
+        visible=False,
     )
 
     # draw primaries and Lagrange points
     Lpoints = get_Lpts(mu=mu)
     Lpts = go.Scatter3d(
-            x=Lpoints[0],
-            y=Lpoints[1],
-            z=0 * Lpoints[0],
-            text=[f"L{jj+1}" for jj in range(5)],
-            hoverinfo="x+y+text",
-            mode="markers",
-            marker=dict(color="magenta", size=4),
-            visible=True
-        )
+        x=Lpoints[0],
+        y=Lpoints[1],
+        z=0 * Lpoints[0],
+        text=[f"L{jj+1}" for jj in range(5)],
+        hoverinfo="x+y+text",
+        mode="markers",
+        marker=dict(color="magenta", size=4),
+        visible=True,
+    )
     bodies = go.Scatter3d(
-            x=[-mu, 1 - mu],
-            y=[0, 0],
-            z=[0, 0],
-            mode="markers",
-            text=["P1", "P2"],
-            hoverinfo="x+y+text",
-            marker=dict(color="cyan"),
-            visible=True
-        )
+        x=[-mu, 1 - mu],
+        y=[0, 0],
+        z=[0, 0],
+        mode="markers",
+        text=["P1", "P2"],
+        hoverinfo="x+y+text",
+        marker=dict(color="cyan"),
+        visible=True,
+    )
     fig = go.Figure(data=[curve, dot, bodycurve, bodyref, bodyoth, Lpts, bodies])
 
     # set layout
@@ -1742,13 +1739,14 @@ def gui2(
             autorange=False,
         ),
     )
-    fig.update_layout(scene=dict(uirevision="camera"))
+    # fig.update_layout(scene=dict(uirevision="camera"))
+    fig.update_layout(scene=dict(uirevision="constant"))
 
     # Dash dropdowns
 
     # app = Dash()
     app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP, dbc.themes.CYBORG])
-    
+
     #fmt: off
     app.layout = dbc.Container([
     dbc.Row([
@@ -1818,15 +1816,17 @@ def gui2(
     dcc.Interval(id="timer", interval=1000 / framerate, disabled=True)])
     ], fluid=True)
     # fmt: on
-    
-    
-    
-    
-    @callback(Output("aux-data", 'data',allow_duplicate=True), Output("slider", "value"), Input("fam-dropdown", "value"),prevent_initial_call=True)
+
+    @callback(
+        Output("aux-data", "data", allow_duplicate=True),
+        Output("slider", "value"),
+        Input("fam-dropdown", "value"),
+        prevent_initial_call=True,
+    )
     def set_family(fam):
         if fam == filenames[0]:
             raise PreventUpdate
-        full_dataframe = pd.read_csv(db_path+fam+".csv")
+        full_dataframe = pd.read_csv(db_path + fam + ".csv")
         if "Index" in full_dataframe.columns:
             full_dataframe.set_index("Index")
 
@@ -1840,19 +1840,16 @@ def gui2(
         df = full_dataframe[param_names].astype(np.float32)
         df = df.drop_duplicates(subset=param_names, keep="first", ignore_index=False)
         vals = df[param_names[:-1]].values
-        
 
         ind0 = np.searchsorted(df.index, 0)
         # arclength (parameterize by this)
         arclen = np.append(0, np.cumsum(np.linalg.norm(np.diff(vals, axis=0), axis=1)))
         smax = max(arclen)
         s0 = arclen[ind0]  # start here
-        
-        aux_data = {"arclen":arclen, "smax":smax, "s0":s0, "vals":vals}
-        
+
+        aux_data = {"arclen": arclen, "smax": smax, "s0": s0, "vals": vals}
+
         return aux_data, s0
-
-
 
     @callback(
         Output("display", "figure", allow_duplicate=True),
@@ -1865,15 +1862,15 @@ def gui2(
         State("timer", "disabled"),
         prevent_initial_call=True,
     )
-    def animate(_, k,frame,speed, curvedata, paused):
+    def animate(_, k, frame, speed, curvedata, paused):
         if curvedata is None:
             raise PreventUpdate
         if paused:
             raise PreventUpdate
 
-        curve = curvedata['coords']
-        period = curvedata['period']
-        
+        curve = curvedata["coords"]
+        period = curvedata["period"]
+
         n = len(curve)
         k = k + speed
         k %= n
@@ -1890,7 +1887,7 @@ def gui2(
             patch.data[4].y = [-np.sin(k * period / n_time)]
 
         return patch, k
-    
+
     @callback(
         Output("aux-data", "data", allow_duplicate=True),
         Input("flip-v", "n_clicks"),
@@ -1900,12 +1897,12 @@ def gui2(
     def flip_vert(_, aux_data):
         if aux_data is None:
             raise PreventUpdate
-        
-        aux_data['vals'] = np.array(aux_data['vals'])
-        aux_data['vals'][:,2] *= -1
-        aux_data['vals'][:,5] *= -1
+
+        aux_data["vals"] = np.array(aux_data["vals"])
+        aux_data["vals"][:, 2] *= -1
+        aux_data["vals"][:, 5] *= -1
         return aux_data
-    
+
     @callback(
         Output("aux-data", "data", allow_duplicate=True),
         Input("flip-h", "n_clicks"),
@@ -1915,15 +1912,15 @@ def gui2(
     def flip_horiz(_, aux_data):
         if aux_data is None:
             raise PreventUpdate
-        
-        aux_data['vals'] = np.array(aux_data['vals'])
-        aux_data['vals'][:,1] *= -1
-        aux_data['vals'][:,3] *= -1
-        aux_data['vals'][:,5] *= -1
+
+        aux_data["vals"] = np.array(aux_data["vals"])
+        aux_data["vals"][:, 1] *= -1
+        aux_data["vals"][:, 3] *= -1
+        aux_data["vals"][:, 5] *= -1
         return aux_data
 
     @callback(
-        Output("curve-data", "data",allow_duplicate=True),
+        Output("curve-data", "data", allow_duplicate=True),
         Output("k-store", "data"),
         Output("card-body-content", "children"),
         Output("display", "figure", allow_duplicate=True),
@@ -1937,16 +1934,23 @@ def gui2(
     def update_curve_within_fam(s, frame, n_prds, aux_data, fig):
         if aux_data is None:
             raise PreventUpdate
-        arclen, smax, s0, vals = aux_data = aux_data["arclen"], aux_data["smax"], aux_data["s0"], aux_data["vals"]
+        arclen, smax, s0, vals = aux_data = (
+            aux_data["arclen"],
+            aux_data["smax"],
+            aux_data["s0"],
+            aux_data["vals"],
+        )
         if vals is None:
             raise PreventUpdate
         spline = CubicSpline(arclen, vals, axis=0)
-        
+
         patch = Patch()
         point = spline(s * smax)
         x0, tf = point[:6], point[-1]
         Xg = targ.get_X(x0, tf)
-        X, _, stm = dc_overconstrained(Xg, targ.f_df_stm, targ_tol,max_iter=max_iter,debug=True)
+        X, _, stm = dc_overconstrained(
+            Xg, targ.f_df_stm, targ_tol, max_iter=max_iter, debug=True
+        )
         eigs = np.linalg.eigvals(stm)
         stab = np.max([(np.abs(lam) + 1 / np.abs(lam)) / 2 for lam in eigs])
         x0 = targ.get_x0(X)
@@ -2025,13 +2029,15 @@ def gui2(
         patch.data[0].z = z
         patch.data[1].z = [0]
         patch.data[4].z = [0]
-        
+
         jc = jacobi_constant(x0)
-        curve_data = dict(coords=xyze[:3].T,period=tf, jacobi=jc, stabind=stab)
-        
-        displaydata = [html.P("x0: ["+", ".join([f"{x:.7f}" for x in x0[:3]])+"]"), 
-                       html.P("v0: ["+", ".join([f"{x:.7f}" for x in x0[3:]])+"]"), 
-                       html.P(f"Period: {tf:.5f}, JC: {jc:.4f}, SI: {stab:.2e}")]
+        curve_data = dict(coords=xyze[:3].T, period=tf, jacobi=jc, stabind=stab)
+
+        displaydata = [
+            html.P("x0: [" + ", ".join([f"{x:.7f}" for x in x0[:3]]) + "]"),
+            html.P("v0: [" + ", ".join([f"{x:.7f}" for x in x0[3:]]) + "]"),
+            html.P(f"Period: {tf:.5f}, JC: {jc:.4f}, SI: {stab:.2e}"),
+        ]
         return curve_data, 0, displaydata, patch
 
     @callback(
@@ -2042,7 +2048,7 @@ def gui2(
     )
     def pauseplay(_, disabled):
         return not disabled
-    
+
     print("COMPILING HELPERS...")
     while True:
         try:
@@ -2052,18 +2058,19 @@ def gui2(
             print("Numba error, recompiling (excepted to happen a few times)")
             pass
     while True:
-        try:            
-            _ = update_curve_within_fam(s0, "P2-Inertial", 1, data, fig) # this will force compile
+        try:
+            _ = update_curve_within_fam(
+                s0, "P2-Inertial", 1, data, fig
+            )  # this will force compile
             break
         except ReferenceError:
             print("Numba error, recompiling (excepted to happen a few times)")
             pass
-    os.system('cls' if os.name == 'nt' else 'clear')
-    
+    os.system("cls" if os.name == "nt" else "clear")
+
     print("\t\tCompiled")
-    
+
     app.run(debug=debug, use_reloader=False, jupyter_mode="inline", port=port)
 
 
 # TODO: pyvista?
-

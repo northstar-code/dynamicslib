@@ -40,18 +40,33 @@ def dc_arclen(
     G = np.array([np.inf] * nX)
     niters = 0
     dX = np.array([np.inf] * nX)
-    while np.linalg.norm(G) > tol and np.linalg.norm(dX) > tol:
+    Gnorm = dXnorm = np.inf
+    
+    scl = 1.
+
+    while Gnorm > tol and dXnorm > tol:
         if max_iter is not None and niters > max_iter:
             raise RuntimeError("Exceeded maximum iterations")
         f, dF, stm_full = f_df_func(X)
         delta = X - X_prev
-        lastG = np.dot(delta, tangent) - s if pseudo else np.dot(delta, delta) - s**2
-        lastDG = tangent if pseudo else 2 * delta
-        G = np.array([*f, lastG])
-        dG = np.vstack((dF, lastDG))
+        if pseudo:
+            norm_constraint = scl * (np.dot(delta, tangent) - s)
+            norm_deriv = scl * tangent
+        else:
+            norm_constraint = scl * (np.dot(delta, delta) - s**2)
+            norm_deriv = scl * 2 * delta
+            # dnorm = np.linalg.norm(delta)
+            # norm_constraint = dnorm - s
+            # norm_deriv = delta / dnorm
+        G = np.array([*f, norm_constraint])
+        dG = np.vstack((dF, norm_deriv))
         dX = -np.linalg.inv(dG) @ G
-        if max_step is not None and np.linalg.norm(dX) > max_step:
-            dX *= max_step / np.linalg.norm(dX)
+
+        Gnorm = np.linalg.norm(G)
+        dXnorm = np.linalg.norm(dX)
+        if max_step is not None and dXnorm > max_step:
+            dX *= max_step / dXnorm
+
         X += dX * fudge
         if debug:
             print(niters, dX)

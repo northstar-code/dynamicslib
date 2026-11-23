@@ -225,6 +225,47 @@ class fullstate_minus_one(Targetter):
         dF = self.DF(stm, eomf)
         f = self.f(x0, xf)
         return f, dF, stm
+    
+class fullstate(Targetter):
+    def __init__(
+        self,
+        int_tol: float,
+        mu: float = muEM,
+    ):
+        self.int_tol = int_tol
+        self.mu = mu
+        
+    def get_X(self, x0: NDArray, period: float):
+        return np.append(x0, period)
+
+    def get_x0(self, X: NDArray):
+        return np.array(X[:-1])
+
+    def get_period(self, X: NDArray):
+        return X[-1]
+
+    def DF(self, stm: NDArray, eomf: NDArray):
+        dF = np.hstack((stm - np.eye(6), eomf[:, None]))
+        return dF
+
+    def f(self, x0: NDArray, xf: NDArray):
+        state_diff = xf - x0
+        return state_diff
+
+    def f_df_stm(self, X: NDArray):
+        x0 = self.get_x0(X)
+        period = self.get_period(X)
+        xstmIC = np.array([*x0, *np.eye(6).flatten()])
+        ts, ys, _, _ = dop853(
+            coupled_stm_eom, (0.0, period), xstmIC, self.int_tol, args=(self.mu,)
+        )
+        xf, stm = ys[:6, -1], ys[6:, -1].reshape(6, 6)
+        xf = np.array(xf)
+        eomf = eom(ts[-1], xf, self.mu)
+
+        dF = self.DF(stm, eomf)
+        f = self.f(x0, xf)
+        return f, dF, stm
 
 
 class axial(Targetter):

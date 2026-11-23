@@ -347,25 +347,45 @@ def get_A_planar(state: NDArray[np.floating], mu: float = muEM) -> NDArray[np.fl
     return A
 
 
+# @njit(cache=True)
+# def eom_planar(
+#     _, state: NDArray[np.floating], mu: float = muEM
+# ) -> NDArray[np.floating]:
+#     x, y, vx, vy = state[:4]
+#     xyz = state[:2]
+#     r1vec = xyz + np.array([mu, 0])
+#     r2vec = xyz + np.array([mu - 1, 0])
+#     r1mag = np.linalg.norm(r1vec)
+#     r2mag = np.linalg.norm(r2vec)
+
+#     ddxyz = (
+#         -(1 - mu) * r1vec / r1mag**3
+#         - mu * r2vec / r2mag**3
+#         + np.array([2 * vy + x, -2 * vx + y])
+#     )
+
+#     dstate = np.append(state[2:], ddxyz)
+#     return dstate
+
+
 @njit(cache=True)
 def eom_planar(
     _, state: NDArray[np.floating], mu: float = muEM
 ) -> NDArray[np.floating]:
     x, y, vx, vy = state[:4]
-    xyz = state[:2]
-    r1vec = xyz + np.array([mu, 0])
-    r2vec = xyz + np.array([mu - 1, 0])
-    r1mag = np.linalg.norm(r1vec)
-    r2mag = np.linalg.norm(r2vec)
+    x1 = x + mu
+    x2 = x + mu - 1.0
+    # r1vec = xyz + np.array([mu, 0])
+    # r2vec = xyz + np.array([mu - 1, 0])
+    r1mag = np.sqrt(x1**2 + y**2)
+    r2mag = np.sqrt(x2**2 + y**2)
 
-    ddxyz = (
-        -(1 - mu) * r1vec / r1mag**3
-        - mu * r2vec / r2mag**3
-        + np.array([2 * vy + x, -2 * vx + y])
-    )
+    mu2 = 1.0 - mu
 
-    dstate = np.append(state[2:], ddxyz)
-    return dstate
+    ax = -mu2 * x1 / r1mag**3 - mu * x2 / r2mag**3 + 2.0 * vy + x
+    ay = -mu2 * y / r1mag**3 - mu * y / r2mag**3 - 2.0 * vx + y
+
+    return np.array([vx, vy, ax, ay])
 
 
 @njit(cache=True)
@@ -719,14 +739,13 @@ def hit_moon_dispatcher(i, t, x, args):
         r2 = 1740 / 384400
 
     dy = x[1]
-    dz = x[2]
-    dx2 = np.abs(x[0] - (1 - mu))
-    dx1 = np.abs(x[0] - (-mu))
+    dx2 = x[0] - (1 - mu)
+    dx1 = x[0] - (-mu)
 
     if dx1 - r1 < dx2 - r2:
-        out = dx1**2 + dy**2 + dz**2 - r1**2
+        out = dx1**2 + dy**2 - r1**2
     else:
-        out = dx2**2 + dy**2 + dz**2 - r2**2
+        out = dx2**2 + dy**2 - r2**2
     return out
     # return dx2**2 + dy**2 - r2**2
 
